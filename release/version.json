@@ -1,6 +1,6 @@
 {
-  "version": "1.7.1",
-  "url": "https://raw.githubusercontent.com/Tsukiinuhibi/ReName/main/release/BatchRename.exe",
-  "sha256": "11abe1fe4c79cf037a0efd3fa73e8037acffbd26ce953a57a5b4ed7880163740",
-  "notes": "更新來源改為 ReName 儲存庫"
+  "version": "1.7.2",
+  "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
+  "sha256": "4e4a2ac84b8752ba22c46925c3bea033fbb26fef0fbd39cc51a0f8d42ac617b5",
+  "notes": "更新來源改為 Forgejo"
 }

@@ -12,8 +12,8 @@ using System.Text.RegularExpressions;
 
 [assembly: AssemblyTitle("批量改名工具")]
 [assembly: AssemblyProduct("批量改名工具")]
-[assembly: AssemblyVersion("1.7.1.0")]
-[assembly: AssemblyFileVersion("1.7.1.0")]
+[assembly: AssemblyVersion("1.7.2.0")]
+[assembly: AssemblyFileVersion("1.7.2.0")]
 
 public class UpdateInfo
 {
@@ -23,7 +23,7 @@ public class UpdateInfo
 public static class Updater
 {
     public const string VersionUrl =
-        "https://raw.githubusercontent.com/Tsukiinuhibi/ReName/main/release/version.json";
+        "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/version.json";
 
     public static Version Current { get { return Assembly.GetExecutingAssembly().GetName().Version; } }
     public static string CurrentText { get { var v = Current; return v.Major + "." + v.Minor + "." + v.Build; } }

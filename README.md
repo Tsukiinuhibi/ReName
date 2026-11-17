@@ -25,10 +25,10 @@ Windows 用的批量改檔名小工具。選取或拖曳檔案進來，程式會
 # 1. 修改 src/ 裡的程式
 # 2. 把 src/Updater.cs 的 AssemblyVersion / AssemblyFileVersion 改成新版本號
 ./publish.sh "這次更新的內容"
-git add -A && git commit -m "批量改名工具 vX.Y.Z" && git push origin main
+git add -A && git commit -m "批量改名工具 vX.Y.Z" && git push <Forgejo 遠端> main
 ```
 
-更新來源固定是這個儲存庫 `main` 分支的 `release/version.json`，請保持儲存庫公開。
+更新來源固定是 Forgejo（https://forgejo.taiyopen.com/tsukiinuhibi/ReName）`main` 分支的 `release/version.json`，請保持儲存庫公開。
 
 ## 檔案
 

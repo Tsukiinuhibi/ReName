@@ -14,7 +14,7 @@ import json, sys
 v, sha, notes = sys.argv[1:4]
 data = {
     "version": v,
-    "url": "https://raw.githubusercontent.com/Tsukiinuhibi/ReName/main/release/BatchRename.exe",
+    "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
     "sha256": sha,
     "notes": notes,
 }
