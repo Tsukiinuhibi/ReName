@@ -1,6 +1,6 @@
 {
-  "version": "3.2.0",
+  "version": "3.2.1",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "1334ef698eb4a5248ab2a7cd16aa25ad54d9d471ad8ee6f59f399cefad2594df",
-  "notes": "版面可以自己拖拉調整大小並記住；拖曳檔案到視窗任何地方都能加入；修正切換分頁時版面破碎、檔案清單被擠小、「改」欄太寬"
+  "sha256": "f51208c7d329dd30190592653bacc116b60428dbcea77724bcd1bde9e947c2b8",
+  "notes": "修正 3.2.0 在 Windows 上開不起來的問題；加上開啟保護（開啟失敗會顯示原因、存錯誤紀錄，並可用預設設定重新開啟）"
 }

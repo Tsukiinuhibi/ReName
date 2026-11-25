@@ -286,6 +286,38 @@ public class Split : SplitContainer
         MouseLeave += (s, e) => { Hover = false; Invalidate(); };
         SplitterMoved += (s, e) => Invalidate();
     }
+    // 最小尺寸：Windows 的 SplitContainer 在還很小的時候設定最小尺寸會直接報錯（程式開不起來），
+    // 所以先記下來，等區塊真的有足夠大小時才套用；視窗被縮得太小時先暫時拿掉。
+    public int Min1, Min2;
+    bool minsOn;
+    public void SetMins(int a, int b) { Min1 = a; Min2 = b; minsOn = false; TryApplyMins(); }
+    int Total { get { return Orientation == Orientation.Vertical ? Width : Height; } }
+    void TryApplyMins()
+    {
+        int total = Total;
+        bool fits = total >= Min1 + Min2 + SplitterWidth + 2;
+        try
+        {
+            if (!fits)
+            {
+                if (minsOn || Panel1MinSize != 0 || Panel2MinSize != 0) { Panel1MinSize = 0; Panel2MinSize = 0; minsOn = false; }
+                return;
+            }
+            if (minsOn) return;
+            int d = SplitterDistance;
+            if (d < Min1) SplitterDistance = Min1;
+            else if (d > total - Min2 - SplitterWidth) SplitterDistance = total - Min2 - SplitterWidth;
+            Panel1MinSize = Min1; Panel2MinSize = Min2; minsOn = true;
+        }
+        catch { minsOn = false; }
+    }
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        if (Total < Min1 + Min2 + SplitterWidth + 2) TryApplyMins();   // 先放寬，再讓系統調整分隔位置
+        try { base.OnSizeChanged(e); } catch { }
+        TryApplyMins();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; G.HQ(g);

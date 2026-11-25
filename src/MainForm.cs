@@ -150,7 +150,8 @@ public class MainForm : Form
     bool splitsReady;
     Split NewSplit(string key, Orientation o, double defaultRatio)
     {
-        var sp = new Split(key, o) { Panel1MinSize = G.P(o == Orientation.Vertical ? 220 : 120), Panel2MinSize = G.P(o == Orientation.Vertical ? 300 : 140) };
+        var sp = new Split(key, o);
+        sp.SetMins(G.P(o == Orientation.Vertical ? 220 : 100), G.P(o == Orientation.Vertical ? 300 : 120));
         splits.Add(sp); splitDefaults[sp] = defaultRatio;
         sp.SplitterMoved += (s, e) => { if (splitsReady) SaveSplit(sp); };
         return sp;
@@ -183,12 +184,12 @@ public class MainForm : Form
         {
             if (restoredSplits.Contains(sp) || sp.FindForm() == null) continue;
             int total = sp.Orientation == Orientation.Vertical ? sp.Width : sp.Height;
-            if (total <= sp.Panel1MinSize + sp.Panel2MinSize + sp.SplitterWidth) continue;
+            if (total <= sp.Min1 + sp.Min2 + sp.SplitterWidth) continue;
             double v = LayoutValue(cfg, sp.Key);
             int d;
             if (sp.Key == "main") d = total - (int)(double.IsNaN(v) ? splitDefaults[sp] : v);
             else d = (int)(total * (double.IsNaN(v) ? splitDefaults[sp] : v));
-            d = Math.Max(sp.Panel1MinSize, Math.Min(total - sp.Panel2MinSize - sp.SplitterWidth, d));
+            d = Math.Max(sp.Min1, Math.Min(total - sp.Min2 - sp.SplitterWidth, d));
             bool was = splitsReady; splitsReady = false;
             try { sp.SplitterDistance = d; } catch { }
             splitsReady = was;
@@ -278,7 +279,7 @@ public class MainForm : Form
         tabs.SelectedIndexChanged += (s, e) => Safe(() => ShowPage(tabs.SelectedIndex));
         var mainSplit = NewSplit("main", Orientation.Horizontal, G.P(150));
         mainSplit.FixedPanel = FixedPanel.Panel2;          // 拉大視窗時，多出來的空間給上面的內容
-        mainSplit.Panel1MinSize = G.P(260); mainSplit.Panel2MinSize = G.P(70);
+        mainSplit.SetMins(G.P(200), G.P(70));
         mainSplit.Panel1.Controls.Add(host);
         mainSplit.Panel2.Controls.Add(BuildTestPanel());
         root.Controls.Add(mainSplit, 0, 2);
@@ -1775,7 +1776,48 @@ static class Program
         try { if (Environment.OSVersion.Version.Major >= 6) SetProcessDPIAware(); } catch { }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.ThreadException += (s, e) => MessageBox.Show("發生錯誤：\r\n" + e.Exception.Message, "批量改名工具", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        Application.Run(new MainForm(args));
+        Application.ThreadException += (s, e) => { WriteCrashLog(e.Exception); MessageBox.Show("發生錯誤：\r\n" + e.Exception.Message, "批量改名工具", MessageBoxButtons.OK, MessageBoxIcon.Error); };
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => WriteCrashLog(e.ExceptionObject as Exception);
+
+        // 開啟保護：建立視窗時出錯，顯示原因並可以用預設設定重新開啟，不會完全打不開
+        MainForm form = null;
+        for (int attempt = 0; attempt < 2 && form == null; attempt++)
+        {
+            try { form = new MainForm(args); }
+            catch (Exception ex)
+            {
+                string log = WriteCrashLog(ex);
+                if (attempt > 0)
+                {
+                    MessageBox.Show("程式還是開不起來：\r\n" + ex.Message + "\r\n\r\n錯誤紀錄：" + log + "\r\n請把這個檔案傳給開發者。", "批量改名工具", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                var ans = MessageBox.Show("程式開啟時發生錯誤：\r\n" + ex.Message + "\r\n\r\n錯誤紀錄已存到：\r\n" + log +
+                    "\r\n\r\n要先把設定備份起來、用預設設定重新開啟嗎？\r\n（原本的設定會存成 settings.備份.xml，不會刪掉）",
+                    "批量改名工具", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
+                if (ans != DialogResult.Yes) return;
+                try
+                {
+                    string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BatchRename");
+                    string cur = Path.Combine(dir, "settings.xml"), bak = Path.Combine(dir, "settings.備份.xml");
+                    if (File.Exists(cur)) { if (File.Exists(bak)) File.Delete(bak); File.Move(cur, bak); }
+                }
+                catch { }
+            }
+        }
+        if (form != null) Application.Run(form);
+    }
+
+    static string WriteCrashLog(Exception ex)
+    {
+        try
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BatchRename");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "錯誤紀錄.txt");
+            File.AppendAllText(path, "==== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  v" + Updater.CurrentText + "  " + Environment.OSVersion + " ====\r\n" + ex + "\r\n\r\n", Encoding.UTF8);
+            return path;
+        }
+        catch { return "（無法寫入錯誤紀錄）"; }
     }
 }
