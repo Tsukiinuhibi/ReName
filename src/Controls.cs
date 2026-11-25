@@ -638,12 +638,36 @@ public class ValueSlider : Control
     protected override void OnMouseUp(MouseEventArgs e) { drag = false; }
 }
 
+// ---------- 選單跟著主題變色 ----------
+public class ThemeMenuColors : ProfessionalColorTable
+{
+    public override Color ToolStripDropDownBackground { get { return Theme.Card; } }
+    public override Color ImageMarginGradientBegin { get { return Theme.Card; } }
+    public override Color ImageMarginGradientMiddle { get { return Theme.Card; } }
+    public override Color ImageMarginGradientEnd { get { return Theme.Card; } }
+    public override Color MenuBorder { get { return Theme.Border; } }
+    public override Color MenuItemBorder { get { return Theme.AccentSoft; } }
+    public override Color MenuItemSelected { get { return Theme.AccentSoft; } }
+    public override Color MenuItemSelectedGradientBegin { get { return Theme.AccentSoft; } }
+    public override Color MenuItemSelectedGradientEnd { get { return Theme.AccentSoft; } }
+    public override Color SeparatorDark { get { return Theme.Border; } }
+    public override Color SeparatorLight { get { return Theme.Card; } }
+}
+
 // ---------- 套用主題、表格樣式、對話框 ----------
 public static class UI
 {
     public static Font BaseFont = new Font("Microsoft JhengHei UI", 10f);
 
     public static void Apply(Control c) { Apply(c, Theme.Bg); }
+
+    public static void StyleMenu(ToolStrip m)
+    {
+        m.Renderer = new ToolStripProfessionalRenderer(new ThemeMenuColors());
+        m.BackColor = Theme.Card; m.ForeColor = Theme.Text; m.Font = BaseFont;
+        var cm = m as ContextMenuStrip; if (cm != null) cm.ShowImageMargin = false;
+        foreach (ToolStripItem it in m.Items) { it.ForeColor = Theme.Text; it.Padding = new Padding(G.P(4), G.P(3), G.P(4), G.P(3)); }
+    }
 
     static void Apply(Control c, Color surface)
     {

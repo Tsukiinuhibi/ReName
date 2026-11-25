@@ -36,7 +36,7 @@ public class MainForm : Form
     // 名稱對照頁
     NiceList catList; DataGridView itemGrid; TLabel lblCatName, lblCatNote; FlatBtn btnNoteEdit, btnNoteDel;
     // 名單頁
-    DataGridView compGrid, remGrid;
+    NiceList listList; DataGridView wordGrid; TLabel lblListName, lblListNote, lblListHint; Chip chipListKind;
     // 檔名格式頁
     NiceList fmtList; Panel fmtEditor; InputBox tbFmtTpl; FlowLayoutPanel fmtCats, fmtDateFlow, fmtCustomDates, fmtPreview;
     TLabel lblFmtTitle, lblFmtCatsHint; TCheck cbFmtMonth; InputBox[] fmtDateBoxes; bool fmtLoading;
@@ -648,45 +648,232 @@ public class MainForm : Form
 
     List<NameFormat> FormatsUsing(string cat) { return cfg.Formats.Where(f => !f.IsDefault && f.Categories.Contains(cat)).ToList(); }
 
-    // ================= 分頁 4：名單 =================
+    // ================= 分頁 4：名單（可以自己開名單） =================
+    static readonly string[][] ListKinds = {
+        new[] { NameList.KindCompany, "公司／廠商", "檔名裡出現這些名稱，就當成公司或廠商。" },
+        new[] { NameList.KindRemark, "備註用語", "檔名中含有這些字的部分當成備註，例如「END已退場」。" },
+        new[] { NameList.KindRemove, "要刪掉的字", "改名時把這些字從檔名拿掉，例如「最終版」「(複本)」。" },
+        new[] { NameList.KindField, "自訂欄位", "檔名裡出現清單中的字，就能在「檔名格式」用〔名單名稱〕把它放到任何位置，例如名單「工區」：A棟、B棟。" },
+    };
+    static readonly HashSet<string> ReservedTokens = new HashSet<string> {
+        "公司", "文件", "文件原名", "頻率", "頻率文字", "日期", "廠商", "廠商1", "廠商2", "編號", "編號文字", "備註", "備註文字", "其他", "名稱", "作業",
+        "年", "西元年", "月", "月0", "日", "日0", "迄年", "迄西元年", "迄月", "迄月0", "迄日", "迄日0" };
+
     Control BuildListsPage()
     {
-        var page = Cols(50, 50);
-        compGrid = ListCard(page, 0, "公司名單", "列在這裡的名稱一定會被當成公司或廠商。沒列到的程式也會自己猜，猜錯時再加進來。", cfg.Companies, v => cfg.Companies = v);
-        remGrid = ListCard(page, 1, "備註用語", "檔名中含有這些字的部分會當成備註，例如「END已退場」。", cfg.Remarks, v => cfg.Remarks = v);
+        var page = Cols(32, 68);
+
+        var left = new Card { Dock = DockStyle.Fill };
+        var lr = Rows(SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
+        var bAddList = B("＋ 新增名單", BtnKind.Primary);
+        lr.Controls.Add(CardHeader(new Control[] { L("名單", LabelRole.Title) }, new Control[] { bAddList }), 0, 0);
+        listList = new NiceList { Font = UI.BaseFont };
+        listList.TitleOf = o => ((NameList)o).Name;
+        listList.SubOf = o => { var l = (NameList)o; return NameList.KindName(l.Kind) + (l.Note.Length > 0 ? "・" + l.Note : ""); };
+        listList.BadgeOf = o => ((NameList)o).Items.Count + " 個";
+        lr.Controls.Add(listList, 0, 1);
+        var lb = Flow();
+        var bEditList = B("編輯", BtnKind.Soft); var bDelList = B("刪除", BtnKind.Danger);
+        var bUp = B("↑", BtnKind.Ghost); var bDown = B("↓", BtnKind.Ghost);
+        Tip(bUp, "往上移"); Tip(bDown, "往下移");
+        lb.Controls.AddRange(new Control[] { bEditList, bDelList, bUp, bDown });
+        lr.Controls.Add(lb, 0, 2);
+        left.Controls.Add(lr);
+        page.Controls.Add(left, 0, 0);
+
+        var right = new Card { Dock = DockStyle.Fill, AccentStrip = true };
+        var rr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent);
+        lblListName = L("", LabelRole.Title); chipListKind = new Chip("", ChipKind.Info);
+        var bEditList2 = B("編輯名單", BtnKind.Ghost);
+        rr.Controls.Add(CardHeader(new Control[] { lblListName, chipListKind }, new Control[] { bEditList2 }), 0, 0);
+        lblListNote = L("", LabelRole.Dim); lblListNote.MaximumSize = new Size(G.P(760), 0);
+        rr.Controls.Add(lblListNote, 0, 1);
+        lblListHint = L("", LabelRole.Dim); lblListHint.MaximumSize = new Size(G.P(760), 0);
+        rr.Controls.Add(lblListHint, 0, 2);
+        var ib = Flow();
+        var bAddWord = B("＋ 新增", BtnKind.Primary); var bEditWord = B("編輯", BtnKind.Soft); var bDelWord = B("刪除", BtnKind.Danger); var bMove = B("移到其他名單…", BtnKind.Ghost);
+        ib.Controls.AddRange(new Control[] { bAddWord, bEditWord, bDelWord, bMove });
+        rr.Controls.Add(ib, 0, 3);
+        wordGrid = NewGrid(true);
+        wordGrid.Columns.Add(TextCol("Word", "內容（點兩下可以直接修改）", 100, false));
+        rr.Controls.Add(wordGrid, 0, 4);
+        right.Controls.Add(rr);
+        page.Controls.Add(right, 1, 0);
+
+        FillListList(0);
+        listList.SelectedIndexChanged += (s, e) => ShowList();
+        listList.DoubleClick += (s, e) => Safe(EditList);
+        bAddList.Click += (s, e) => Safe(() => {
+            var l = ListDialog(null); if (l == null) return;
+            cfg.Lists.Add(l); FillListList(cfg.Lists.Count - 1); Changed();
+        });
+        bEditList.Click += (s, e) => Safe(EditList);
+        bEditList2.Click += (s, e) => Safe(EditList);
+        bDelList.Click += (s, e) => Safe(() => {
+            var l = CurList(); if (l == null) return;
+            string warn = "";
+            if (l.Kind == NameList.KindField && cfg.Formats.Exists(f => f.Template.Contains("{" + l.Name + "}")))
+                warn = "\r\n有檔名格式用到〔" + l.Name + "〕，刪除後那個位置會變成空的。";
+            if (!UI.Confirm(this, "刪除名單", "要刪除「" + l.Name + "」和裡面的 " + l.Items.Count + " 個內容嗎？" + warn, "刪除", "取消")) return;
+            int i = cfg.Lists.IndexOf(l); cfg.Lists.Remove(l);
+            FillListList(Math.Min(i, cfg.Lists.Count - 1)); Changed();
+        });
+        EventHandler move = (s, e) => {
+            var l = CurList(); if (l == null) return;
+            int i = cfg.Lists.IndexOf(l), j = i + (s == bUp ? -1 : 1);
+            if (j < 0 || j >= cfg.Lists.Count) return;
+            cfg.Lists[i] = cfg.Lists[j]; cfg.Lists[j] = l;
+            FillListList(j); Changed();
+        };
+        bUp.Click += move; bDown.Click += move;
+        bAddWord.Click += (s, e) => Safe(() => {
+            var l = CurList(); if (l == null) { UI.Info(this, "新增", "請先新增或選一個名單。"); return; }
+            var v = UI.Prompt(this, "新增到「" + l.Name + "」", "可以一次加很多個，一行一個。", new[] { "內容" }, new[] { "" }, new[] { true },
+                              vals => vals[0].Trim().Length == 0 ? "內容不能是空的。" : null);
+            if (v == null) return;
+            var dup = new List<string>();
+            foreach (var line in v[0].Split('\n'))
+            {
+                var w = line.Trim(); if (w.Length == 0) continue;
+                if (l.Items.Contains(w)) { dup.Add(w); continue; }
+                l.Items.Add(w);
+            }
+            ShowList(); listList.Invalidate(); Changed();
+            if (dup.Count > 0) UI.Info(this, "新增", "這些已經在名單裡了，沒有重複加入：\r\n" + string.Join("、", dup.ToArray()));
+        });
+        bEditWord.Click += (s, e) => Safe(() => {
+            var l = CurList(); if (l == null || wordGrid.CurrentRow == null) return;
+            int i = wordGrid.CurrentRow.Index; string old = l.Items[i];
+            var v = UI.Prompt(this, "編輯", null, new[] { "內容" }, new[] { old }, null,
+                              vals => vals[0].Length == 0 ? "內容不能是空的。" : (vals[0] != old && l.Items.Contains(vals[0]) ? "「" + vals[0] + "」已經在名單裡了。" : null));
+            if (v == null) return;
+            l.Items[i] = v[0]; ShowList(); Changed();
+        });
+        bDelWord.Click += (s, e) => {
+            var l = CurList(); if (l == null || wordGrid.SelectedRows.Count == 0) return;
+            var del = new List<string>(); foreach (DataGridViewRow gr in wordGrid.SelectedRows) del.Add((string)gr.Tag);
+            if (!UI.Confirm(this, "刪除", "要從「" + l.Name + "」刪除 " + string.Join("、", del.ToArray()) + " 嗎？", "刪除", "取消")) return;
+            foreach (var w in del) l.Items.Remove(w);
+            ShowList(); listList.Invalidate(); Changed();
+        };
+        bMove.Click += (s, e) => Safe(() => {
+            var l = CurList(); if (l == null || wordGrid.SelectedRows.Count == 0) return;
+            var others = cfg.Lists.Where(x => x != l).ToList();
+            if (others.Count == 0) { UI.Info(this, "移到其他名單", "目前只有一個名單。"); return; }
+            int ch = UI.Choose(this, "移到其他名單", "要把選取的內容移到哪個名單？", others.Select(x => x.Name + "（" + NameList.KindName(x.Kind) + "）").Concat(new[] { "取消" }).ToArray());
+            if (ch < 0 || ch >= others.Count) return;
+            foreach (DataGridViewRow gr in wordGrid.SelectedRows) { var w = (string)gr.Tag; l.Items.Remove(w); if (!others[ch].Items.Contains(w)) others[ch].Items.Add(w); }
+            ShowList(); listList.Invalidate(); Changed();
+        });
+        wordGrid.CellEndEdit += (s, e) => {
+            var l = CurList(); if (l == null) return;
+            var gr = wordGrid.Rows[e.RowIndex]; string old = (string)gr.Tag;
+            string v = Convert.ToString(gr.Cells[0].Value ?? "").Trim();
+            if (v == old) return;
+            if (v.Length == 0 || l.Items.Contains(v)) { gr.Cells[0].Value = old; if (v.Length > 0) UI.Info(this, "名單", "「" + v + "」已經在名單裡了。"); return; }
+            l.Items[l.Items.IndexOf(old)] = v; gr.Tag = v; Changed();
+        };
         return page;
     }
 
-    DataGridView ListCard(TableLayoutPanel page, int col, string title, string hint, string values, Action<string> save)
+    NameList CurList() { return listList.SelectedItem as NameList; }
+
+    void FillListList(int select)
     {
-        var card = new Card { Dock = DockStyle.Fill };
-        var r = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent);
-        var bAdd = B("＋ 新增", BtnKind.Primary); var bDel = B("刪除", BtnKind.Danger);
-        r.Controls.Add(CardHeader(new Control[] { L(title, LabelRole.Title) }, new Control[] { bAdd, bDel }), 0, 0);
-        r.Controls.Add(new TLabel(hint, LabelRole.Dim) { MaximumSize = new Size(G.P(500), 0) }, 0, 1);
-        var g = NewGrid(true);
-        g.Columns.Add(TextCol("Name", "名稱（點兩下可以修改）", 100, false));
-        foreach (var n in (values ?? "").Split('\n')) if (n.Trim().Length > 0) g.Rows.Add(n.Trim());
-        r.Controls.Add(g, 0, 2);
-        card.Controls.Add(r);
-        page.Controls.Add(card, col, 0);
-        Action read = () => {
-            var sb = new StringBuilder();
-            foreach (DataGridViewRow gr in g.Rows) { var v = Convert.ToString(gr.Cells[0].Value ?? "").Trim(); if (v.Length > 0) sb.Append(v).Append('\n'); }
-            save(sb.ToString()); Changed();
-        };
-        bAdd.Click += (s, e) => Safe(() => {
-            var v = UI.Prompt(this, "新增到" + title, null, new[] { "名稱" }, new[] { "" }, null, vals => vals[0].Length == 0 ? "名稱不能是空的。" : null);
-            if (v == null) return;
-            g.Rows.Add(v[0]); read();
-        });
-        bDel.Click += (s, e) => {
-            if (g.SelectedRows.Count == 0) return;
-            foreach (DataGridViewRow gr in g.SelectedRows) g.Rows.Remove(gr);
-            read();
-        };
-        g.CellEndEdit += (s, e) => read();
-        return g;
+        listList.BeginUpdate(); listList.Items.Clear();
+        foreach (var l in cfg.Lists) listList.Items.Add(l);
+        listList.EndUpdate();
+        if (cfg.Lists.Count > 0) listList.SelectedIndex = Math.Max(0, Math.Min(select, cfg.Lists.Count - 1));
+        ShowList();
+    }
+
+    void ShowList()
+    {
+        var l = CurList();
+        lblListName.Text = l == null ? "（還沒有名單，按左邊「＋ 新增名單」）" : l.Name;
+        chipListKind.Text = l == null ? "" : NameList.KindName(l.Kind); chipListKind.Visible = l != null;
+        lblListNote.Text = l == null ? "" : l.Note; lblListNote.Visible = l != null && l.Note.Length > 0;
+        string hint = "";
+        if (l != null)
+        {
+            foreach (var k in ListKinds) if (k[0] == l.Kind) hint = k[2];
+            if (l.Kind == NameList.KindField)
+            {
+                bool used = cfg.Formats.Exists(f => f.Template.Contains("{" + l.Name + "}"));
+                hint += used ? "\r\n✔ 已經有檔名格式用到〔" + l.Name + "〕。" : "\r\n⚠ 還沒有檔名格式用到〔" + l.Name + "〕，這些字目前會從新檔名消失。請到「檔名格式」點「更多…」插入〔" + l.Name + "〕。";
+            }
+        }
+        lblListHint.Text = hint;
+        wordGrid.Rows.Clear();
+        if (l != null) foreach (var w in l.Items) { int i = wordGrid.Rows.Add(w); wordGrid.Rows[i].Tag = w; }
+        UI.StyleGrid(wordGrid);
+        if (chipListKind.Parent != null) { chipListKind.BackColor = Theme.Card; chipListKind.Invalidate(); }
+    }
+
+    void EditList()
+    {
+        var l = CurList(); if (l == null) return;
+        string oldName = l.Name;
+        var r = ListDialog(l); if (r == null) return;
+        // 自訂欄位改名時，檔名格式和學到的規則裡的〔舊名〕也一起改
+        if (oldName != r.Name && l.Kind == NameList.KindField)
+        {
+            foreach (var f in cfg.Formats) f.Template = f.Template.Replace("{" + oldName + "}", "{" + r.Name + "}");
+            foreach (var x in cfg.LearnedRules) x.Template = x.Template.Replace("{" + oldName + "}", "{" + r.Name + "}");
+        }
+        l.Name = r.Name; l.Kind = r.Kind; l.Note = r.Note;
+        FillListList(cfg.Lists.IndexOf(l)); FillLearnGrid(); Changed();
+    }
+
+    // 新增／編輯名單：名稱、用途、註解
+    NameList ListDialog(NameList existing)
+    {
+        using (var f = UI.NewDialog(this, existing == null ? "新增名單" : "編輯名單"))
+        {
+            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Dock = DockStyle.Fill };
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, G.P(560)));
+            int r = 0;
+            var name = new InputBox(existing != null ? existing.Name : "");
+            t.Controls.Add(new TLabel("名單名稱") { Margin = new Padding(G.P(3), G.P(10), G.P(12), G.P(3)) }, 0, r); t.Controls.Add(name, 1, r++);
+            var kinds = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Dock = DockStyle.Fill };
+            var radios = new List<TRadio>();
+            foreach (var k in ListKinds)
+            {
+                var rb = new TRadio(k[1]) { Tag = k[0], Checked = (existing != null ? existing.Kind : NameList.KindCompany) == k[0] };
+                radios.Add(rb); kinds.Controls.Add(rb);
+                kinds.Controls.Add(new TLabel(k[2], LabelRole.Dim) { MaximumSize = new Size(G.P(520), 0), Margin = new Padding(G.P(32), 0, G.P(3), G.P(6)) });
+            }
+            t.Controls.Add(new TLabel("用途") { Margin = new Padding(G.P(3), G.P(10), G.P(12), G.P(3)) }, 0, r); t.Controls.Add(kinds, 1, r++);
+            var note = new InputBox(existing != null ? existing.Note : "", true) { Height = G.P(80) };
+            t.Controls.Add(new TLabel("註解") { Margin = new Padding(G.P(3), G.P(10), G.P(12), G.P(3)) }, 0, r); t.Controls.Add(note, 1, r++);
+            t.Controls.Add(new TLabel("註解可以不填，有填才會顯示。", LabelRole.Dim), 1, r++);
+            var err = new TLabel("", LabelRole.Danger); t.Controls.Add(err, 1, r++);
+            var flow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+            var ok = new FlatBtn("儲存", BtnKind.Primary); var cancel = new FlatBtn("取消");
+            flow.Controls.Add(cancel); flow.Controls.Add(ok);
+            t.Controls.Add(flow, 0, r); t.SetColumnSpan(flow, 2);
+            f.Controls.Add(t);
+            NameList result = null;
+            ok.Click += (s, e) => {
+                string n = name.Text.Trim();
+                string kind = radios.First(x => x.Checked).Tag as string;
+                if (n.Length == 0) { err.Text = "名單名稱不能是空的。"; return; }
+                if (cfg.Lists.Exists(x => x != existing && x.Name == n)) { err.Text = "已經有叫「" + n + "」的名單了。"; return; }
+                if (kind == NameList.KindField && (ReservedTokens.Contains(n) || n.IndexOfAny(new[] { '{', '}', '〔', '〕' }) >= 0))
+                { err.Text = "自訂欄位的名稱不能是「" + n + "」（和內建欄位重複或有括號），請換一個名字。"; return; }
+                result = new NameList { Name = n, Kind = kind, Note = note.Text.Trim(), Items = existing != null ? existing.Items : new List<string>() };
+                f.Close();
+            };
+            cancel.Click += (s, e) => f.Close();
+            f.CancelButton = cancel;
+            UI.Apply(f);
+            foreach (Control c in t.Controls) { var tl = c as TLabel; if (tl != null) tl.ApplyFont(Font); }
+            foreach (Control c in kinds.Controls) { var tl = c as TLabel; if (tl != null) tl.ApplyFont(Font); }
+            f.Shown += (s, e) => name.Box.Focus();
+            f.ShowDialog(this);
+            return result;
+        }
     }
 
     // ================= 分頁 5：檔名格式 =================
@@ -745,8 +932,12 @@ public class MainForm : Form
         var more = B("更多…", BtnKind.Ghost);
         more.Click += (s, e) => {
             var menu = new ContextMenuStrip();
+            foreach (var fn in Core.FieldNames(cfg))
+            { string tok = "〔" + fn + "〕"; menu.Items.Add(tok + "　（自訂欄位）", null, (s2, e2) => InsertToken(tbFmtTpl, tok)); }
+            if (Core.FieldNames(cfg).Count > 0) menu.Items.Add(new ToolStripSeparator());
             foreach (var t in new[] { "廠商", "頻率文字", "編號文字", "備註文字", "年", "西元年", "月", "月0", "日", "日0", "迄月", "迄月0", "迄日", "迄日0" })
             { string tok = "〔" + t + "〕"; menu.Items.Add(tok, null, (s2, e2) => InsertToken(tbFmtTpl, tok)); }
+            UI.StyleMenu(menu);
             menu.Show(more, new Point(0, more.Height));
         };
         tokens.Controls.Add(more);
@@ -1092,6 +1283,7 @@ public class MainForm : Form
             c.Version = 3;
         }
         if (c.Version < 4) Core.MigrateToV4(c);       // 第 4 版：分類、格式清單
+        if (c.Version < 5) Core.MigrateToV5(c);       // 第 5 版：名單可以自己開
         foreach (var l in c.LearnedRules)            // 舊版學到的規則沒有記錄「情況」，用範例算出來
             if (string.IsNullOrEmpty(l.Signature)) { try { l.Signature = Core.SignatureOf(l.ExampleFrom, c) ?? Learned.AnyCase; } catch { l.Signature = Learned.AnyCase; } }
         return c;
@@ -1148,6 +1340,7 @@ public class MainForm : Form
         UpdateTest();
         if (tabs.SelectedIndex == 4) { fmtList.Invalidate(); UpdateFormatPreview(); }
         if (tabs.SelectedIndex == 2) catList.Invalidate();
+        if (tabs.SelectedIndex == 3) { listList.Invalidate(); ShowList(); }
     }
 
     void FillGrid()
@@ -1317,9 +1510,11 @@ public class MainForm : Form
         }
         if (res.AddedCompany.Length > 0)
         {
-            cfg.Companies = (cfg.Companies ?? "").TrimEnd('\n') + "\n" + res.AddedCompany;
-            compGrid.Rows.Add(res.AddedCompany);
-            msg += "\r\n　 另外把「" + res.AddedCompany + "」加進了公司名單。";
+            var cl = cfg.Lists.FirstOrDefault(x => x.Kind == NameList.KindCompany);
+            if (cl == null) { cl = new NameList { Name = "公司名單", Kind = NameList.KindCompany }; cfg.Lists.Insert(0, cl); }
+            if (!cl.Items.Contains(res.AddedCompany)) cl.Items.Add(res.AddedCompany);
+            FillListList(cfg.Lists.IndexOf(cl));
+            msg += "\r\n　 另外把「" + res.AddedCompany + "」加進了「" + cl.Name + "」名單。";
         }
         show(msg, LabelRole.Success);
         FillLearnGrid(); Changed();

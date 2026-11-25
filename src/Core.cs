@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -48,6 +49,27 @@ public class Category
     public string Name = "";
     public string Note = "";    // 分類的註解，沒寫就不顯示
     public List<MapItem> Items = new List<MapItem>();
+}
+
+// 名單：使用者自己開的清單，每個名單有一種用途
+public class NameList
+{
+    public const string KindCompany = "company", KindRemark = "remark", KindRemove = "remove", KindField = "field";
+    public string Name = "";
+    public string Kind = KindCompany;
+    public string Note = "";
+    public List<string> Items = new List<string>();
+
+    public static string KindName(string k)
+    {
+        switch (k)
+        {
+            case KindRemark: return "備註用語";
+            case KindRemove: return "要刪掉的字";
+            case KindField: return "自訂欄位";
+            default: return "公司／廠商";
+        }
+    }
 }
 
 // 日期寫法的預設樣式
@@ -98,7 +120,7 @@ public class NameFormat
 
 public class Settings
 {
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
     public const string V2Template = "{公司}-{文件}{頻率}-{日期}-{廠商1}-{廠商2}-{編號}";
     public const string DefaultTemplate = "{公司}-{文件}{頻率}-{日期}-{廠商1}-{廠商2}-{編號}{備註}";
     public const string DefaultRemarks = "END\n退場\n作廢\n結案\n停用\n註銷\n補件\n暫停\n取消\n過期";
@@ -124,6 +146,7 @@ public class Settings
     public List<Learned> LearnedRules = new List<Learned>();
     public List<Category> Categories = new List<Category>();
     public List<NameFormat> Formats = new List<NameFormat>();
+    public List<NameList> Lists = new List<NameList>();
     public string ThemeMode = "system";        // system / light / dark
     public string Accent = "暖陽橘";            // 預設配色名稱，或 "custom"
     public string CustomAccent = "";            // #RRGGBB
@@ -249,7 +272,40 @@ public static class Core
                     d.DateStyleId = st.Id;
             c.Formats.Add(d);
         }
-        c.Version = Settings.CurrentVersion;
+        c.Version = 4;
+    }
+
+    // 第 5 版：公司名單、備註用語改成可以自己開的名單
+    public static void MigrateToV5(Settings c)
+    {
+        if (c.Lists == null) c.Lists = new List<NameList>();
+        if (c.Lists.Count == 0)
+        {
+            c.Lists.Add(new NameList { Name = "公司名單", Kind = NameList.KindCompany, Items = new List<string>(ParseList(c.Companies)) });
+            c.Lists.Add(new NameList { Name = "備註用語", Kind = NameList.KindRemark, Items = new List<string>(ParseList(c.Remarks)) });
+        }
+        c.Companies = ""; c.Remarks = "";
+        c.Version = 5;
+    }
+
+    // 某種用途的名單裡全部的字（舊版的 Companies / Remarks 文字也算進去）
+    public static List<string> ListWords(Settings c, string kind)
+    {
+        var all = new List<string>();
+        if (kind == NameList.KindCompany) all.AddRange(ParseList(c.Companies));
+        if (kind == NameList.KindRemark) all.AddRange(ParseList(c.Remarks));
+        if (c.Lists != null)
+            foreach (var l in c.Lists)
+                if (l.Kind == kind)
+                    foreach (var w in l.Items) { var t = (w ?? "").Trim(); if (t.Length > 0 && !all.Contains(t)) all.Add(t); }
+        return all;
+    }
+
+    public static List<string> FieldNames(Settings c)
+    {
+        var r = new List<string>();
+        if (c.Lists != null) foreach (var l in c.Lists) if (l.Kind == NameList.KindField && l.Name.Trim().Length > 0) r.Add(l.Name.Trim());
+        return r;
     }
 
     // 名稱對照：有分類就用分類，沒有就用舊的文字對照表
@@ -447,8 +503,20 @@ public static class Core
     // 把檔名拆成：公司、文件、頻率、日期、廠商、編號
     public static StemResult GetNewStem(string stem, Settings c, Dictionary<string, string> map, bool useLearned = true)
     {
-        var companies = ParseList(c.Companies);
-        var remarkWords = new List<string>(ParseList(c.Remarks));
+        var companies = new HashSet<string>(ListWords(c, NameList.KindCompany));
+        var remarkWords = ListWords(c, NameList.KindRemark);
+
+        // 0. 「要刪掉的字」名單：先從檔名拿掉
+        foreach (var w in ListWords(c, NameList.KindRemove)) stem = stem.Replace(w, "");
+
+        // 自訂欄位名單：括號裡剛好是名單中的字，或檔名裡出現名單中的字，就記下來
+        var fields = new Dictionary<string, string>();
+        var fieldLists = new List<NameList>();
+        if (c.Lists != null) foreach (var l in c.Lists) if (l.Kind == NameList.KindField && l.Name.Trim().Length > 0) fieldLists.Add(l);
+        Func<string, string> fieldOf = v => {
+            foreach (var l in fieldLists) if (!fields.ContainsKey(l.Name.Trim()) && l.Items.Exists(w => (w ?? "").Trim() == v)) return l.Name.Trim();
+            return null;
+        };
 
         // 1. 括號：頻率 (日)(月)(年)…、備註、編號（含英數字）、名稱（公司/廠商）
         var names = new List<string>(); var codes = new List<string>(); var freqs = new List<string>(); var remarks = new List<string>();
@@ -456,11 +524,27 @@ public static class Core
             var v = x.Groups[1].Value.Trim();
             if (v.Length == 0) return "";
             if (FreqRx.IsMatch(v)) { freqs.Add("(" + v + ")"); return ""; }   // 頻率夾在文件名稱中間時直接接起來
-            if (IsRemark(v, remarkWords)) remarks.Add(v);
+            string fn = fieldOf(v);
+            if (fn != null) fields[fn] = v;
+            else if (IsRemark(v, remarkWords)) remarks.Add(v);
             else if (CodeRx.IsMatch(v)) codes.Add("(" + v + ")");
             else if (!names.Contains(v)) names.Add(v);
             return "-";
         });
+
+        // 括號外面出現的自訂欄位文字（長的先比對）
+        foreach (var l in fieldLists)
+        {
+            string fn = l.Name.Trim(); if (fields.ContainsKey(fn)) continue;
+            var words = l.Items.Select(w => (w ?? "").Trim()).Where(w => w.Length > 0).OrderByDescending(w => w.Length);
+            foreach (var w in words)
+            {
+                int at = text.IndexOf(w, StringComparison.Ordinal);
+                if (at < 0) continue;
+                fields[fn] = w; text = text.Substring(0, at) + "-" + text.Substring(at + w.Length);
+                break;
+            }
+        }
 
         // 2. 日期（可以沒有）
         DateKind kind; DateTime start; DateTime? end; string dErr;
@@ -533,6 +617,8 @@ public static class Core
             KV("備註", remarks.Count > 0 ? "(" + string.Join("-", remarks.ToArray()) + ")" : ""),
             KV("其他", other),
         };
+        // 自訂欄位：每個欄位名單都放一個代碼，沒出現就是空的（格式裡前面的 - 會自動拿掉）
+        foreach (var l in fieldLists) { string fn = l.Name.Trim(); string fv; fields.TryGetValue(fn, out fv); parts.Add(KV(fn, fv ?? "")); }
         var vals = new List<KeyValuePair<string, string>>(parts);
         vals.Add(KV("名稱", company));        // 舊版代碼，仍可使用
         vals.Add(KV("作業", doc + freq));
@@ -735,7 +821,7 @@ public static class Core
         if (!res.Ok)
         {
             string first = target.Split('-')[0].Trim();
-            if (first.Length > 0 && pre.Contains(first) && !ParseList(c.Companies).Contains(first))
+            if (first.Length > 0 && pre.Contains(first) && !ListWords(c, NameList.KindCompany).Contains(first))
             {
                 var c2 = c.Clone(); c2.Companies = (c.Companies ?? "").TrimEnd('\n') + "\n" + first;
                 var res2 = GetNewStem(pre, c2, map, false);

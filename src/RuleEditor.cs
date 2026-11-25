@@ -134,7 +134,8 @@ public class RuleEditor : Form
         if (l.DocKey.Length == 0) return "「適用的文件名稱」不能是空的。";
         var ms = Regex.Matches(l.Template, @"\{([^{}]*)\}");
         if (ms.Count == 0) return "「新檔名的樣子」裡至少要有一個〔欄位〕，不然每個檔案都會改成一樣的名字。";
-        foreach (Match m in ms) if (!Known.Contains(m.Groups[1].Value)) return "看不懂〔" + m.Groups[1].Value + "〕這個欄位，請用「插入欄位」選單裡的欄位。";
+        var fields = Core.FieldNames(ctx);
+        foreach (Match m in ms) if (!Known.Contains(m.Groups[1].Value) && !fields.Contains(m.Groups[1].Value)) return "看不懂〔" + m.Groups[1].Value + "〕這個欄位，請用「插入欄位」選單裡的欄位。";
         if (tbTpl.Text.IndexOf('〔') >= 0 && FriendlyRx.Matches(tbTpl.Text).Count != Regex.Matches(tbTpl.Text, "〔").Count) return "有一個〔沒有對應的〕。";
         return null;
     }

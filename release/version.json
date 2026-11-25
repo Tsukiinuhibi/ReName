@@ -1,6 +1,6 @@
 {
-  "version": "3.0.0",
+  "version": "3.1.0",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "822a0e9a99bd7a8209f2cd738ccaa47c0dfa0db431d943995c9b03acba44d25f",
-  "notes": "介面全面重新設計（亮色/暗色/跟隨系統、配色、色環自訂顏色）；名稱對照可分類並加註解；可自訂多組檔名格式並指定給分類；改名後可按「上一步」復原；學規則會判斷重複與衝突、規則可編輯"
+  "sha256": "dd29c81f1e83ff272df9b8fed5a64b30ea549cf4e366ad7029a3c34483f960e3",
+  "notes": "名單可以自己新增、編輯、刪除；每個名單可選用途：公司／廠商、備註用語、要刪掉的字、自訂欄位（可在檔名格式用〔名單名稱〕帶入）"
 }
