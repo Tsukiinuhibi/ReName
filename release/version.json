@@ -1,6 +1,6 @@
 {
-  "version": "3.5.1",
+  "version": "3.6.0",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "0ae71823e2b36e725eb01fcb430e8cd8c5b797c5836c29445af11d3c82a72529",
-  "notes": "暗色模式文字與按鈕改成白色"
+  "sha256": "a3ed4813dd78b7d820e82a26b75f343529d3fefd2f2c65b1bd663ba7c2a65bf9",
+  "notes": "右上角改成設定按鈕；外觀和更新搬進設定"
 }

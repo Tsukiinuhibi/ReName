@@ -26,7 +26,7 @@ public class MainForm : Form
     // 共用
     PillTabs tabs;
     readonly List<Control> pages = new List<Control>();
-    Panel updateBar; TLabel lblUpdate; FlatBtn btnUpdate, btnThemeToggle;
+    Panel updateBar; TLabel lblUpdate; FlatBtn btnUpdate, btnSettings;
     InputBox tbTest; FlowLayoutPanel testParts; TLabel lblTestResult;
 
     // 改名頁
@@ -244,7 +244,7 @@ public class MainForm : Form
         var files = e.Data.GetData(DataFormats.FileDrop) as string[];
         if (files == null || files.Length == 0) return;
         Safe(() => {
-            if (tabs.SelectedIndex != 0) tabs.SelectedIndex = 0;
+            if (currentPage != 0) ShowPage(0);
             AddFiles(files); RefreshAll();
         });
     }
@@ -276,15 +276,15 @@ public class MainForm : Form
         brand.Controls.Add(L("批量改名工具", LabelRole.Title));
         brand.Controls.Add(new Chip("v" + Updater.CurrentText, ChipKind.Accent));
         tabs = new PillTabs { Margin = new Padding(G.P(24), 0, 0, 0), Font = UI.BaseFont };
-        tabs.Items.AddRange(new[] { "改名", "範例學習", "名稱對照", "名單", "檔名格式", "外觀" });
+        tabs.Items.AddRange(new[] { "改名", "範例學習", "名稱對照", "名單", "檔名格式" });
         tabs.Size = tabs.GetPreferredSize(Size.Empty);
-        btnThemeToggle = B(Theme.Dark ? "☀" : "☾", BtnKind.Ghost);
-        Tip(btnThemeToggle, "切換亮色／暗色");
-        btnThemeToggle.Click += (s, e) => { cfg.ThemeMode = Theme.Dark ? "light" : "dark"; ApplyTheme(); };
-        header.Controls.Add(brand, 0, 0); header.Controls.Add(tabs, 1, 0); header.Controls.Add(btnThemeToggle, 2, 0);
+        btnSettings = B("⚙ 設定", BtnKind.Ghost);
+        Tip(btnSettings, "外觀（亮色／暗色、主題色）和更新");
+        btnSettings.Click += (s, e) => Safe(() => ShowPage(SettingsPage));
+        header.Controls.Add(brand, 0, 0); header.Controls.Add(tabs, 1, 0); header.Controls.Add(btnSettings, 2, 0);
         // 視窗拉窄時先把左上的標題藏起來，讓分頁按鈕永遠看得到
         header.Resize += (s, e) => {
-            int need = header.Padding.Horizontal + brand.PreferredSize.Width + tabs.Width + tabs.Margin.Horizontal + btnThemeToggle.Width + btnThemeToggle.Margin.Horizontal + G.P(8);
+            int need = header.Padding.Horizontal + brand.PreferredSize.Width + tabs.Width + tabs.Margin.Horizontal + btnSettings.Width + btnSettings.Margin.Horizontal + G.P(8);
             bool show = header.Width >= need;
             if (brand.Visible != show) brand.Visible = show;
         };
@@ -295,10 +295,10 @@ public class MainForm : Form
         var host = new Panel { Dock = DockStyle.Fill, Padding = new Padding(G.P(10), G.P(8), G.P(10), 0), Margin = new Padding(0) };
         host.Resize += (s, e) => host.Invalidate(true);
         pages.Add(BuildRenamePage()); pages.Add(BuildLearnPage()); pages.Add(BuildMapPage());
-        pages.Add(BuildListsPage()); pages.Add(BuildFormatPage()); pages.Add(BuildLookPage());
+        pages.Add(BuildListsPage()); pages.Add(BuildFormatPage()); pages.Add(BuildSettingsPage());
         foreach (var p in pages) { p.Dock = DockStyle.Fill; p.Visible = p == pages[0]; host.Controls.Add(p); }
         pageHost = host; currentPage = 0;
-        tabs.SelectedIndexChanged += (s, e) => Safe(() => ShowPage(tabs.SelectedIndex));
+        tabs.SelectedIndexChanged += (s, e) => { if (!syncingTabs) Safe(() => ShowPage(tabs.SelectedIndex)); };
         var mainSplit = NewSplit("main", Orientation.Horizontal, G.P(150));
         mainSplit.FixedPanel = FixedPanel.Panel2;          // 拉大視窗時，多出來的空間給上面的內容
         mainSplit.SetMins(G.P(200), G.P(70));
@@ -317,12 +317,23 @@ public class MainForm : Form
         if (Environment.OSVersion.Platform != PlatformID.Win32NT || !c.IsHandleCreated) return;
         try { SendMessage(c.Handle, 0x000B, (IntPtr)(on ? 1 : 0), IntPtr.Zero); } catch { }   // WM_SETREDRAW：換頁時先停止重畫，換好再一次畫出來
     }
-    int currentPage;
+    int currentPage; bool syncingTabs;
+    const int SettingsPage = 5;
+    static readonly string[] PageNames = { "改名", "範例學習", "名稱對照", "名單", "檔名格式", "設定" };
     void ShowPage(int i)
     {
         if (i < 0 || i >= pages.Count || i == currentPage) return;
         var page = pages[i];
-        using (Perf.Begin("切換到「" + tabs.Items[i] + "」"))
+        // 設定頁不屬於上面的分頁：分頁列取消選取，設定按鈕亮起來
+        syncingTabs = true;
+        try
+        {
+            if (i == SettingsPage) { if (tabs.SelectedIndex != -1) tabs.SelectedIndex = -1; }
+            else if (tabs.SelectedIndex != i) tabs.SelectedIndex = i;
+        }
+        finally { syncingTabs = false; }
+        btnSettings.Kind = i == SettingsPage ? BtnKind.Soft : BtnKind.Ghost; btnSettings.Invalidate();
+        using (Perf.Begin("切換到「" + PageNames[i] + "」"))
         {
             Redraw(pageHost, false);
             try
@@ -1294,7 +1305,30 @@ public class MainForm : Form
     }
 
     // ================= 分頁 6：外觀 =================
-    Control BuildLookPage()
+    // ================= 設定：外觀、更新 =================
+    PillTabs settingsTabs;
+    Control BuildSettingsPage()
+    {
+        var page = Rows(SizeType.AutoSize, SizeType.Percent);
+        settingsTabs = new PillTabs { Font = UI.BaseFont, Margin = new Padding(G.P(4), G.P(2), 0, G.P(8)), Anchor = AnchorStyles.Left | AnchorStyles.Top };
+        settingsTabs.Items.AddRange(new[] { "外觀", "更新" });
+        settingsTabs.Size = settingsTabs.GetPreferredSize(Size.Empty);
+        page.Controls.Add(settingsTabs, 0, 0);
+        var host = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+        var look = BuildLookSection(); var upd = BuildUpdateSection();
+        look.Dock = DockStyle.Fill; upd.Dock = DockStyle.Fill; upd.Visible = false;
+        host.Controls.Add(look); host.Controls.Add(upd);
+        page.Controls.Add(host, 0, 1);
+        settingsTabs.SelectedIndexChanged += (s, e) => Safe(() => {
+            var show = settingsTabs.SelectedIndex == 1 ? upd : look;
+            Redraw(host, false);
+            try { show.Visible = true; show.BringToFront(); (show == look ? upd : look).Visible = false; }
+            finally { Redraw(host, true); host.Invalidate(true); }
+        });
+        return page;
+    }
+
+    Control BuildLookSection()
     {
         var stack = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1 };
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -1317,12 +1351,29 @@ public class MainForm : Form
         color.Controls.Add(cr);
         stack.Controls.Add(color, 0, 1);
 
-        var about = new Card { Dock = DockStyle.Top, AutoSize = true };
-        var ar = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); ar.AutoSize = true;
-        var bCheck = B("檢查更新", BtnKind.Outline);
+        BuildLookTiles();
+        return new ScrollHost(stack);
+    }
+
+    Control BuildUpdateSection()
+    {
+        var stack = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1 };
+        stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var cur = new Card { Dock = DockStyle.Top, AutoSize = true };
+        var ur = Rows(SizeType.AutoSize, SizeType.AutoSize); ur.AutoSize = true;
+        var bCheck = B("檢查更新", BtnKind.Primary);
         lblAboutVer = L("目前版本 v" + Updater.CurrentText, LabelRole.Dim);
-        ar.Controls.Add(CardHeader(new Control[] { L("關於與更新紀錄", LabelRole.Title), lblAboutVer }, new Control[] { bCheck }), 0, 0);
-        ar.Controls.Add(L("版本號是「大型.中型.小型」：介面或架構大改版時第一碼加 1，新增功能時第二碼加 1，修正或微調時第三碼加 1。", LabelRole.Dim), 0, 1);
+        ur.Controls.Add(CardHeader(new Control[] { L("更新", LabelRole.Title), lblAboutVer }, new Control[] { bCheck }), 0, 0);
+        ur.Controls.Add(new TLabel("程式每次開啟都會自動檢查新版本，有的話上方會出現提示，按「立即更新」就會自動下載、換新並重新開啟。你的設定、學到的規則和改名紀錄都會保留。", LabelRole.Dim) { MaximumSize = new Size(G.P(880), 0) }, 0, 1);
+        cur.Controls.Add(ur);
+        stack.Controls.Add(cur, 0, 0);
+        bCheck.Click += (s, e) => CheckUpdate(true);
+
+        var about = new Card { Dock = DockStyle.Top, AutoSize = true };
+        var ar = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); ar.AutoSize = true;
+        ar.Controls.Add(L("更新紀錄", LabelRole.Title), 0, 0);
+        ar.Controls.Add(new TLabel("版本號是「大型.中型.小型」：介面或架構大改版時第一碼加 1，新增功能時第二碼加 1，修正或微調時第三碼加 1。", LabelRole.Dim) { MaximumSize = new Size(G.P(880), 0) }, 0, 1);
         var log = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Dock = DockStyle.Fill, Margin = new Padding(0, G.P(8), 0, 0) };
         log.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); log.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); log.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         int i = 0;
@@ -1335,12 +1386,8 @@ public class MainForm : Form
         }
         ar.Controls.Add(log, 0, 2);
         about.Controls.Add(ar);
-        stack.Controls.Add(about, 0, 2);
-        bCheck.Click += (s, e) => CheckUpdate(true);
-
-        var page = new ScrollHost(stack);
-        BuildLookTiles();
-        return page;
+        stack.Controls.Add(about, 0, 1);
+        return new ScrollHost(stack);
     }
 
     readonly List<KeyValuePair<string, Tile>> modeTileList = new List<KeyValuePair<string, Tile>>(), colorTileList = new List<KeyValuePair<string, Tile>>();
@@ -1393,7 +1440,6 @@ public class MainForm : Form
         using (Perf.Begin("切換配色"))
         {
             Theme.Load(cfg);
-            btnThemeToggle.Text = Theme.Dark ? "☀" : "☾";
             Cursor = Cursors.WaitCursor;
             Redraw(this, false);   // 全部換好顏色再一次畫出來
             try
@@ -1497,7 +1543,7 @@ public class MainForm : Form
     void RefreshAll()
     {
         if (loading) return;
-        if (tabs.SelectedIndex == 0 || rows.Count == 0)
+        if (currentPage == 0 || rows.Count == 0)
         {
             Core.UpdateRows(rows, cfg);
             FillGrid();
@@ -1505,9 +1551,9 @@ public class MainForm : Form
         }
         else rowsStale = true;   // 不在改名頁時先不重算檔案清單，切回改名頁才算，其他頁面就不會卡
         UpdateTest();
-        if (tabs.SelectedIndex == 4 && fmtList.FindForm() != null) { fmtList.Invalidate(); UpdateFormatPreview(); }
-        if (tabs.SelectedIndex == 2) catList.Invalidate();
-        if (tabs.SelectedIndex == 3) { listList.Invalidate(); ShowList(); }
+        if (currentPage == 4 && fmtList.FindForm() != null) { fmtList.Invalidate(); UpdateFormatPreview(); }
+        if (currentPage == 2) catList.Invalidate();
+        if (currentPage == 3) { listList.Invalidate(); ShowList(); }
     }
 
     void FillGrid()
