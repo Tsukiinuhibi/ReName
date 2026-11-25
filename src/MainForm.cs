@@ -33,7 +33,7 @@ public class MainForm : Form
     Card gridCard;
     DataGridView grid; Chip chipTotal, chipReady, chipBad; FlatBtn btnRun, btnUndo; TLabel lblEmpty;
     // 範例學習頁
-    InputBox tbFrom, tbTo; TLabel lblLearn; DataGridView learnGrid, rulesGrid; Chip chipRules;
+    InputBox tbFrom, tbTo; TLabel lblLearn; DataGridView learnGrid; Chip chipRules;
     // 名稱對照頁
     NiceList catList; DataGridView itemGrid; TLabel lblCatName, lblCatNote; FlatBtn btnNoteEdit, btnNoteDel;
     // 名單頁
@@ -506,11 +506,8 @@ public class MainForm : Form
     // ================= 分頁 2：範例學習 =================
     Control BuildLearnPage()
     {
-        bool legacy = cfg.Rules != null && cfg.Rules.Count > 0;
         TableLayoutPanel trRef = null; Card teachRef = null;
         var page = NewTopSplit("learnTop", () => trRef.GetPreferredSize(new Size(Math.Max(G.P(200), teachRef.Width - teachRef.Padding.Horizontal - G.P(20)), 0)).Height + teachRef.Padding.Vertical + G.P(6));
-        Split lowerSplit = legacy ? NewSplit("learnRules", Orientation.Horizontal, 0.62) : null;
-        if (lowerSplit != null) page.Panel2.Controls.Add(lowerSplit);
 
         var teach = new Card { Dock = DockStyle.Fill, AccentStrip = true, Padding = new Padding(G.P(16), G.P(12), G.P(6), G.P(12)) };
         var tr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); tr.AutoSize = true; tr.AutoSizeMode = AutoSizeMode.GrowAndShrink; tr.Padding = new Padding(0, 0, G.P(10), 0);
@@ -547,33 +544,9 @@ public class MainForm : Form
         learnGrid.Columns.Add(TextCol("To", "範例：結果", 17));
         lr.Controls.Add(learnGrid, 0, 1);
         list.Controls.Add(lr);
-        if (lowerSplit != null) lowerSplit.Panel1.Controls.Add(list); else page.Panel2.Controls.Add(list);
+        page.Panel2.Controls.Add(list);
         FillLearnGrid();
 
-        if (legacy)
-        {
-            var old = new Card { Dock = DockStyle.Fill };
-            var or = Rows(SizeType.AutoSize, SizeType.Percent);
-            or.Controls.Add(L("舊版「尋找→取代」規則（之前設定的，仍然有效；全部刪掉後下次開啟就不再顯示）", LabelRole.Dim), 0, 0);
-            rulesGrid = NewGrid(true); rulesGrid.AllowUserToAddRows = true; rulesGrid.AllowUserToDeleteRows = true; rulesGrid.Dock = DockStyle.Fill;
-            rulesGrid.Columns.Add(CheckCol("Enabled", "啟用"));
-            var stageCol = new DataGridViewComboBoxColumn { Name = "Stage", HeaderText = "何時套用", FillWeight = 20, FlatStyle = FlatStyle.Flat };
-            stageCol.Items.AddRange(Rule.StageBefore, Rule.StageAfter);
-            rulesGrid.Columns.Add(stageCol);
-            rulesGrid.Columns.Add(TextCol("Find", "尋找文字", 24, false));
-            rulesGrid.Columns.Add(TextCol("Replace", "取代為", 24, false));
-            rulesGrid.Columns.Add(CheckCol("Regex", "正規表示式", 96));
-            rulesGrid.Columns.Add(TextCol("Note", "備註", 16, false));
-            foreach (var rule in cfg.Rules)
-                rulesGrid.Rows.Add(rule.Enabled, rule.Stage == Rule.StageAfter ? Rule.StageAfter : Rule.StageBefore, rule.Find ?? "", rule.Replace ?? "", rule.UseRegex, rule.Note ?? "");
-            rulesGrid.DefaultValuesNeeded += (s, e) => { e.Row.Cells["Enabled"].Value = true; e.Row.Cells["Stage"].Value = Rule.StageBefore; e.Row.Cells["Regex"].Value = false; };
-            rulesGrid.CurrentCellDirtyStateChanged += (s, e) => { if (rulesGrid.IsCurrentCellDirty && !(rulesGrid.CurrentCell is DataGridViewTextBoxCell)) rulesGrid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
-            rulesGrid.CellValueChanged += (s, e) => { if (!loading) { ReadLegacyRules(); Changed(); } };
-            rulesGrid.RowsRemoved += (s, e) => { if (!loading) { ReadLegacyRules(); Changed(); } };
-            or.Controls.Add(rulesGrid, 0, 1);
-            old.Controls.Add(or);
-            lowerSplit.Panel2.Controls.Add(old);
-        }
 
         bFill.Click += (s, e) => { tbFrom.Text = tbTest.Text.Trim(); tbTo.Box.Focus(); };
         bLearn.Click += (s, e) => Safe(() => { LearnOne(tbFrom.Text, tbTo.Text, true); });
@@ -599,22 +572,6 @@ public class MainForm : Form
             cfg.LearnedRules.Remove(l); FillLearnGrid(); Changed();
         };
         return page;
-    }
-
-    void ReadLegacyRules()
-    {
-        if (rulesGrid == null) return;
-        var list = new List<Rule>();
-        foreach (DataGridViewRow gr in rulesGrid.Rows)
-        {
-            if (gr.IsNewRow) continue;
-            list.Add(new Rule {
-                Enabled = gr.Cells["Enabled"].Value is bool && (bool)gr.Cells["Enabled"].Value, Stage = Convert.ToString(gr.Cells["Stage"].Value),
-                Find = Convert.ToString(gr.Cells["Find"].Value) ?? "", Replace = Convert.ToString(gr.Cells["Replace"].Value) ?? "",
-                UseRegex = gr.Cells["Regex"].Value is bool && (bool)gr.Cells["Regex"].Value, Note = Convert.ToString(gr.Cells["Note"].Value) ?? "",
-            });
-        }
-        cfg.Rules = list;
     }
 
     void RecolorLearnGrid()
@@ -1469,6 +1426,7 @@ public class MainForm : Form
         bool fresh = c == null;
         if (c == null) c = new Settings();
         if (c.Rules == null) c.Rules = new List<Rule>();
+        c.Rules.RemoveAll(r => r == null || string.IsNullOrEmpty(r.Find));   // 舊版「尋找→取代」空規則沒有作用，直接清掉（這個區塊已經從畫面拿掉）
         if (c.LearnedRules == null) c.LearnedRules = new List<Learned>();
         if (!fresh && c.Version < 2)
         {   // 很舊的版本：換成新的檔名格式，並補上新的對照
