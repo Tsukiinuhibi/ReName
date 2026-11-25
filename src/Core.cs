@@ -29,6 +29,8 @@ public class Learned
     public string Template = "";
     public string ExampleFrom = "";
     public string ExampleTo = "";
+    // true = 只用在完全相同的情況，不會去「借用」到其他情況的檔案（這樣新學的規則不會搶走舊規則在管的檔案）
+    public bool ExactOnly;
 }
 
 public class LearnResult
@@ -703,6 +705,7 @@ public static class Core
             if (!l.Enabled || l.DocKey != rawDoc) continue;
             if (!IsAnyCase(l.Signature) && l.Signature == sig) return l;
             if (IsAnyCase(l.Signature)) { if (any == null) any = l; continue; }
+            if (l.ExactOnly) continue;   // 只用在自己那種情況
             int score = 0; var have = SigParts(l.Signature);
             foreach (var kv in want) { string v; if (have.TryGetValue(kv.Key, out v) && v == kv.Value) score += kv.Key == "D" ? 2 : 1; }
             if (score > bestScore) { bestScore = score; best = l; }
@@ -930,6 +933,32 @@ public static class Core
         plan.Existing = used;
         plan.Action = (!IsAnyCase(used.Signature) && used.Signature == rule.Signature) ? LearnAction.Conflict : LearnAction.NewCase;
         return plan;
+    }
+
+    // 保護舊規則：如果加入（或重新啟用）這條規則，哪些已學會規則自己的範例會被改成不一樣的結果
+    public static List<Learned> AffectedBy(Settings c, Learned add, bool alreadyInList)
+    {
+        var hit = new List<Learned>();
+        var rules = c.LearnedRules ?? new List<Learned>();
+        var c2 = c.Clone();
+        c2.LearnedRules = new List<Learned>(rules);
+        if (!alreadyInList) c2.LearnedRules.Add(add);
+        bool was = add.Enabled; add.Enabled = true;
+        try
+        {
+            var map = BuildMap(c);
+            foreach (var l in rules)
+            {
+                if (l == add || !l.Enabled || l.DocKey != add.DocKey || string.IsNullOrEmpty(l.ExampleFrom)) continue;
+                add.Enabled = false;
+                var before = Process(l.ExampleFrom, c2, map);
+                add.Enabled = true;
+                var after = Process(l.ExampleFrom, c2, map);
+                if (before.Ok && before.UsedRule == l && (!after.Ok || after.UsedRule != l || after.Final != before.Final)) hit.Add(l);
+            }
+        }
+        finally { add.Enabled = was; }
+        return hit;
     }
 
     // ---------- 檔案清單 ----------

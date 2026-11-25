@@ -1,6 +1,6 @@
 {
-  "version": "3.4.1",
+  "version": "3.5.0",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "a81d1dc5ad8381860a856743504753a7785b162c776cae3cf646d2c2e5f1be26",
-  "notes": "拿掉範例學習頁的舊版規則區塊"
+  "sha256": "da22bdd59a6c0d293180ff0c64dacbf8d75ea11afbe058dba08c3782f1f7e7e0",
+  "notes": "學新規則不會覆蓋已學會的規則；重疊時先問、預設保留原本的、不會刪除"
 }

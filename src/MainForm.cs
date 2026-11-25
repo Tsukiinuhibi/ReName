@@ -586,7 +586,7 @@ public class MainForm : Form
         learnGrid.Rows.Clear();
         foreach (var l in cfg.LearnedRules)
         {
-            int i = learnGrid.Rows.Add(l.Enabled, l.DocKey, Core.DescribeSignature(l.Signature), Core.FriendlyTemplate(l.Template), l.ExampleFrom, l.ExampleTo);
+            int i = learnGrid.Rows.Add(l.Enabled, l.DocKey, Core.DescribeSignature(l.Signature) + (l.ExactOnly && !Core.IsAnyCase(l.Signature) ? "（只用這種）" : ""), Core.FriendlyTemplate(l.Template), l.ExampleFrom, l.ExampleTo);
             learnGrid.Rows[i].Tag = l;
             if (!l.Enabled) learnGrid.Rows[i].DefaultCellStyle.ForeColor = Theme.TextDim;
             if (l == cur) learnGrid.CurrentCell = learnGrid.Rows[i].Cells["Doc"];
@@ -1661,36 +1661,66 @@ public class MainForm : Form
                      (plan.Existing != null ? "（用的是「" + plan.Existing.DocKey + "／" + Core.DescribeSignature(plan.Existing.Signature) + "」這條規則）" : "（用的是檔名格式）"), LabelRole.Success);
                 return 1;
             case Core.LearnAction.ReEnable:
+            {
+                var hit = Core.AffectedBy(cfg, plan.Existing, true);
+                if (hit.Count > 0)
+                {
+                    int ch = AskKeepOld(hit, plan.Existing, from, to, true);
+                    if (ch != 1) { show(ch == 0 ? "・保留原本的規則；之前學過的那條維持暫停，沒有刪除。" : "・這次沒有學，規則都沒有變動。", LabelRole.Dim); return 0; }
+                    foreach (var h in hit) h.Enabled = false;
+                    plan.Existing.Enabled = true;
+                    msg = "✔ 已經改用之前學過的那條規則；原本的 " + hit.Count + " 條先暫停使用（沒有刪除，在下面清單可以再勾回來）。";
+                    break;
+                }
                 plan.Existing.Enabled = true;
                 msg = "✔ 這條規則之前就學過了，只是暫停使用，已經重新啟用。";
                 break;
+            }
             case Core.LearnAction.Conflict:
             {
+                // 同樣的情況已經有規則：預設保留舊的，絕不直接蓋掉或刪除
                 var old = plan.Existing;
-                int ch = UI.Choose(this, "規則衝突",
-                    "「" + old.DocKey + "」在同樣的情況（" + Core.DescribeSignature(old.Signature) + "）已經有一條規則，和這次的範例改法不一樣：\r\n\r\n" +
-                    "【舊的】" + Core.FriendlyTemplate(old.Template) + "\r\n　　例：" + old.ExampleFrom + "  →  " + old.ExampleTo + "\r\n\r\n" +
-                    "【新的】" + Core.FriendlyTemplate(res.Rule.Template) + "\r\n　　例：" + from + "  →  " + to + "\r\n\r\n要用哪一個？",
-                    "用新的", "保留舊的", "兩個都留著（新的先暫停）");
-                if (ch == 1 || ch < 0) { show("・保留原本的規則，這次的範例沒有學。", LabelRole.Dim); return 0; }
+                res.Rule.ExactOnly = true;
+                int ch = AskKeepOld(new List<Learned> { old }, res.Rule, from, to, false);
                 int at = cfg.LearnedRules.IndexOf(old);
-                if (ch == 0) { cfg.LearnedRules[at] = res.Rule; msg = "✔ 已經換成新的改法。"; }
-                else
+                if (ch == 0)
                 {
                     res.Rule.Enabled = false; cfg.LearnedRules.Insert(at + 1, res.Rule);
-                    show("✔ 兩條都保留了，新的那條目前暫停使用；之後可以在下面的清單切換要用哪一條。", LabelRole.Success);
+                    show("✔ 原本的規則繼續使用；新的改法也存起來了（目前暫停），之後可以在下面清單勾選要用哪一條。", LabelRole.Success);
                     FillLearnGrid(); Changed(); return 0;
                 }
+                if (ch != 1) { show("・這次沒有學，原本的規則沒有變動。", LabelRole.Dim); return 0; }
+                old.Enabled = false; cfg.LearnedRules.Insert(at + 1, res.Rule);
+                msg = "✔ 已經改用新的改法；原本那條先暫停使用（沒有刪除，在下面清單可以再勾回來）。";
                 break;
             }
-            case Core.LearnAction.NewCase:
-                cfg.LearnedRules.Insert(Math.Max(0, cfg.LearnedRules.IndexOf(plan.Existing)), res.Rule);   // 比較具體的情況放前面
-                msg = "✔ 學會了！「" + res.Rule.DocKey + "」原本的規則保留，新規則只用在「" + Core.DescribeSignature(res.Rule.Signature) + "」的檔案：\r\n　 " + Core.FriendlyTemplate(res.Rule.Template);
+            default:   // NewRule、NewCase：新規則
+            {
+                // 這個文件已經有學過的規則時，新規則只用在跟這次範例完全一樣的情況，不會去搶舊規則在管的檔案
+                bool docHasRules = cfg.LearnedRules.Exists(l => l.DocKey == res.Rule.DocKey);
+                res.Rule.ExactOnly = docHasRules;
+                var hit = Core.AffectedBy(cfg, res.Rule, false);
+                if (hit.Count > 0)
+                {
+                    int ch = AskKeepOld(hit, res.Rule, from, to, false);
+                    if (ch == 0)
+                    {
+                        res.Rule.Enabled = false; cfg.LearnedRules.Add(res.Rule);
+                        show("✔ 原本的規則繼續使用；新的改法也存起來了（目前暫停），之後可以在下面清單勾選要用哪一條。", LabelRole.Success);
+                        FillLearnGrid(); Changed(); return 0;
+                    }
+                    if (ch != 1) { show("・這次沒有學，原本的規則沒有變動。", LabelRole.Dim); return 0; }
+                    foreach (var h in hit) h.Enabled = false;
+                    cfg.LearnedRules.Add(res.Rule);
+                    msg = "✔ 已經改用新的改法；原本的 " + hit.Count + " 條先暫停使用（沒有刪除，在下面清單可以再勾回來）。";
+                    break;
+                }
+                cfg.LearnedRules.Add(res.Rule);   // 加在最後面，舊規則優先
+                msg = docHasRules
+                    ? "✔ 學會了！「" + res.Rule.DocKey + "」原本的規則都保留不變，新規則只用在「" + Core.DescribeSignature(res.Rule.Signature) + "」的檔案：\r\n　 " + Core.FriendlyTemplate(res.Rule.Template)
+                    : "✔ 學會了！以後文件名稱是「" + res.Rule.DocKey + "」的檔案，新檔名會長這樣：\r\n　 " + Core.FriendlyTemplate(res.Rule.Template);
                 break;
-            default:
-                cfg.LearnedRules.Add(res.Rule);
-                msg = "✔ 學會了！以後文件名稱是「" + res.Rule.DocKey + "」的檔案，新檔名會長這樣：\r\n　 " + Core.FriendlyTemplate(res.Rule.Template);
-                break;
+            }
         }
         if (res.AddedCompany.Length > 0)
         {
@@ -1704,6 +1734,26 @@ public class MainForm : Form
         FillLearnGrid(); Changed();
         RefreshAll();
         return 1;
+    }
+
+    // 新學的規則會影響已學會的規則時，問使用者；第一個選項（預設）一定是保留舊的。0 = 保留舊的、新的存起來先暫停；1 = 改用新的、舊的暫停；-1 = 不學
+    int AskKeepOld(List<Learned> olds, Learned neu, string from, string to, bool reEnable)
+    {
+        var sb = new StringBuilder();
+        sb.Append(reEnable ? "要重新啟用的這條規則，會改變下面這些已學會規則的結果：\r\n\r\n"
+                           : "這次學的改法，會改變下面這些已學會規則的結果：\r\n\r\n");
+        int n = 0;
+        foreach (var o in olds)
+        {
+            if (++n > 3) { sb.Append("……還有 " + (olds.Count - 3) + " 條\r\n"); break; }
+            sb.Append("【已學會】" + o.DocKey + "／" + Core.DescribeSignature(o.Signature) + "：" + Core.FriendlyTemplate(o.Template) + "\r\n　　例：" + o.ExampleFrom + "  →  " + o.ExampleTo + "\r\n");
+        }
+        sb.Append("\r\n【" + (reEnable ? "要重新啟用的" : "這次的") + "】" + Core.FriendlyTemplate(neu.Template) + "\r\n　　例：" + from + "  →  " + to + "\r\n\r\n");
+        sb.Append("不管選哪一個都不會刪除任何規則，之後可以在「已學會的規則」清單自己勾選或刪除。");
+        return UI.Choose(this, "和已學會的規則重疊", sb.ToString(),
+            reEnable ? "維持原本的（這條繼續暫停）" : "保留原本的，新的也存起來（先暫停）",
+            reEnable ? "改用這條（原本的暫停）" : "改用新的（原本的暫停）",
+            "取消");
     }
 
     void LearnFromManual()
@@ -1726,7 +1776,7 @@ public class MainForm : Form
         }
         RefreshAll();
         string msg = "完成 " + ok + " 個（學會新規則，或現有規則本來就會這樣改），可以到「範例學習」頁查看。";
-        if (kept.Count > 0) msg += "\r\n\r\n下面這些和舊規則衝突、你選了保留舊的，維持手動修改：\r\n" + string.Join("\r\n", kept.ToArray());
+        if (kept.Count > 0) msg += "\r\n\r\n下面這些和已學會的規則重疊，原本的規則繼續使用（新的改法有存起來的話是暫停狀態），維持手動修改：\r\n" + string.Join("\r\n", kept.ToArray());
         if (fails.Count > 0) msg += "\r\n\r\n下面這些看不出規律，維持手動修改：\r\n" + string.Join("\r\n", fails.ToArray());
         UI.Info(this, "把手動改的學起來", msg);
     }

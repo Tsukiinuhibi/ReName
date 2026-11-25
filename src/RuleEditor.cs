@@ -126,6 +126,7 @@ public class RuleEditor : Form
             Enabled = cbEnabled.Checked, DocKey = tbDoc.Text.Trim(),
             Signature = rbCase.Checked && caseSig != null ? caseSig : Learned.AnyCase,
             Template = ToTemplate(tbTpl.Text), ExampleFrom = tbEx.Text.Trim(), ExampleTo = orig.ExampleTo,
+            ExactOnly = orig.ExactOnly,
         };
     }
 
