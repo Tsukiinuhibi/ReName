@@ -48,6 +48,7 @@ public enum BtnKind { Primary, Outline, Soft, Ghost, Danger }
 public class FlatBtn : Button
 {
     public BtnKind Kind = BtnKind.Soft;
+    public bool KeepColor;   // 暗色模式也保留原本的強調色文字
     bool hover, down;
 
     public FlatBtn(string text, BtnKind kind = BtnKind.Soft)
@@ -89,6 +90,7 @@ public class FlatBtn : Button
             default:
                 fill = hover ? Theme.Mix(Theme.CardAlt, Theme.Text, 0.06) : Theme.CardAlt; border = Theme.Border; fore = Theme.Text; break;
         }
+        if (Theme.Dark && !KeepColor && Kind != BtnKind.Primary) fore = Color.White;   // 暗色模式按鈕文字一律白色（KeepColor 的按鈕除外）
         if (!Enabled) { fore = Theme.Mix(fore, G.SurfaceOf(this), 0.55); if (fill != Color.Empty) fill = Theme.Mix(fill, G.SurfaceOf(this), 0.5); if (border != Color.Empty) border = Theme.Mix(border, G.SurfaceOf(this), 0.5); }
         if (down && Enabled) r.Inflate(-0.6f, -0.6f);
         if (fill != Color.Empty) G.Fill(g, r, rad, fill);

@@ -409,7 +409,7 @@ public class MainForm : Form
         var top = new Card { Dock = DockStyle.Fill };
         var topRows = Rows(SizeType.AutoSize, SizeType.AutoSize); topRows.AutoSize = true;
         chipTotal = new Chip("共 0 個"); chipReady = new Chip("將改名 0 個", ChipKind.Success); chipBad = new Chip("有問題 0 個", ChipKind.Danger);
-        var bAdd = B("＋ 加入檔案", BtnKind.Primary); var bDir = B("加入資料夾", BtnKind.Outline);
+        var bAdd = B("＋ 加入檔案", BtnKind.Primary); var bDir = B("加入資料夾", BtnKind.Outline); bDir.KeepColor = true;
         topRows.Controls.Add(CardHeader(new Control[] { L("檔案清單", LabelRole.Title), chipTotal, chipReady, chipBad }, new Control[] { bDir, bAdd }), 0, 0);
         var bar = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0) };
         bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));

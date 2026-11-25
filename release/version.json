@@ -1,6 +1,6 @@
 {
-  "version": "3.5.0",
+  "version": "3.5.1",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "da22bdd59a6c0d293180ff0c64dacbf8d75ea11afbe058dba08c3782f1f7e7e0",
-  "notes": "學新規則不會覆蓋已學會的規則；重疊時先問、預設保留原本的、不會刪除"
+  "sha256": "0ae71823e2b36e725eb01fcb430e8cd8c5b797c5836c29445af11d3c82a72529",
+  "notes": "暗色模式文字與按鈕改成白色"
 }
