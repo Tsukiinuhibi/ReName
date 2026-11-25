@@ -177,6 +177,7 @@ public class Card : Panel
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
     }
     // 自動高度的卡片：裡面的內容靠上排，卡片只長到剛好的高度（避免 Windows 上越撐越高）
+    protected override void OnResize(EventArgs e) { base.OnResize(e); UI.FitWrapLabels(this); }
     protected override void OnControlAdded(ControlEventArgs e)
     {
         base.OnControlAdded(e);
@@ -205,6 +206,7 @@ public class ScrollHost : Panel
     public readonly Control Content;
     readonly VScrollBar vs = new VScrollBar();
     bool busy;
+    int styledGen;
 
     public ScrollHost(Control content)
     {
@@ -247,11 +249,13 @@ public class ScrollHost : Panel
             int sbw = SystemInformation.VerticalScrollBarWidth;
             int w = Width;
             Content.MinimumSize = new Size(w, 0); Content.MaximumSize = new Size(w, 0); Content.Width = w;
+            UI.FitWrapLabels(Content);
             int h = Content.PreferredSize.Height;
             if (h > Height)
             {
                 w = Width - sbw;
                 Content.MinimumSize = new Size(w, 0); Content.MaximumSize = new Size(w, 0); Content.Width = w;
+                UI.FitWrapLabels(Content);
                 h = Content.PreferredSize.Height;
             }
             Content.Height = h;
@@ -264,7 +268,7 @@ public class ScrollHost : Panel
                 int maxVal = Math.Max(0, h - Height);
                 if (vs.Value > maxVal) vs.Value = maxVal;
                 Content.Top = -vs.Value;
-                Theme.StyleScrollBars(this);
+                if (styledGen != Theme.Gen) { styledGen = Theme.Gen; Theme.StyleScrollBars(this); }
             }
             else { vs.Value = 0; Content.Top = 0; }
         }
@@ -350,12 +354,23 @@ public class TLabel : Label
     {
         Text = text; Role = role; AutoSize = true; UseMnemonic = false;
         Margin = new Padding(G.P(3), G.P(5), G.P(3), G.P(3));
+        if (UI.BaseFont != null) ApplyFont(UI.BaseFont);   // 建立時就用對的字型，之後不必再整頁換字型（很慢）
+    }
+    // 字型共用同一份，已經是正確字型就不重設（重設字型會讓整個版面重算，切分頁會卡）
+    static readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
+    static Font Cached(Font b, float add, FontStyle st)
+    {
+        string k = b.FontFamily.Name + "|" + (b.Size + add) + "|" + st;
+        Font f; if (!fontCache.TryGetValue(k, out f)) { f = new Font(b.FontFamily, b.Size + add, st); fontCache[k] = f; }
+        return f;
     }
     public void ApplyFont(Font baseFont)
     {
-        if (Role == LabelRole.Title) Font = new Font(baseFont.FontFamily, baseFont.Size + 2f, FontStyle.Bold);
-        else if (Role == LabelRole.Big) Font = new Font(baseFont.FontFamily, baseFont.Size + 5f, FontStyle.Bold);
-        else if (Role == LabelRole.Dim) Font = new Font(baseFont.FontFamily, baseFont.Size - 0.5f);
+        Font want = null;
+        if (Role == LabelRole.Title) want = Cached(baseFont, 2f, FontStyle.Bold);
+        else if (Role == LabelRole.Big) want = Cached(baseFont, 5f, FontStyle.Bold);
+        else if (Role == LabelRole.Dim) want = Cached(baseFont, -0.5f, FontStyle.Regular);
+        if (want != null && !ReferenceEquals(Font, want)) Font = want;
     }
     public Color RoleColor()
     {
@@ -817,7 +832,7 @@ public static class UI
         foreach (ToolStripItem it in m.Items) { it.ForeColor = Theme.Text; it.Padding = new Padding(G.P(4), G.P(3), G.P(4), G.P(3)); }
     }
 
-    static void Apply(Control c, Color surface)
+    public static void Apply(Control c, Color surface)
     {
         Color inner = surface;
         if (c is Form) { c.BackColor = Theme.Bg; c.ForeColor = Theme.Text; inner = Theme.Bg; Theme.StyleTitleBar((Form)c); }
@@ -850,6 +865,7 @@ public static class UI
         c.Invalidate();
     }
 
+    static Font headerFont;
     public static void StyleGrid(DataGridView g)
     {
         g.BackgroundColor = Theme.Card; g.BorderStyle = BorderStyle.None; g.GridColor = Theme.GridLine;
@@ -858,15 +874,21 @@ public static class UI
         g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
         g.RowHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
         g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-        g.ColumnHeadersHeight = G.P(38);
-        g.RowTemplate.Height = G.P(36);
-        foreach (DataGridViewRow r in g.Rows) r.Height = G.P(36);
+        if (g.ColumnHeadersHeight != G.P(38)) g.ColumnHeadersHeight = G.P(38);
+        if (g.RowTemplate.Height != G.P(36))
+        {
+            g.RowTemplate.Height = G.P(36);
+            foreach (DataGridViewRow r in g.Rows) r.Height = G.P(36);
+        }
         var h = g.ColumnHeadersDefaultCellStyle;
         h.BackColor = Theme.Card; h.ForeColor = Theme.TextDim; h.SelectionBackColor = Theme.Card; h.SelectionForeColor = Theme.TextDim;
-        h.Padding = new Padding(G.P(6), 0, G.P(6), 0); h.Font = new Font(BaseFont.FontFamily, BaseFont.Size - 0.5f, FontStyle.Bold);
+        h.Padding = new Padding(G.P(6), 0, G.P(6), 0);
+        if (headerFont == null || headerFont.FontFamily.Name != BaseFont.FontFamily.Name) headerFont = new Font(BaseFont.FontFamily, BaseFont.Size - 0.5f, FontStyle.Bold);
+        if (!ReferenceEquals(h.Font, headerFont)) h.Font = headerFont;
         var d = g.DefaultCellStyle;
         d.BackColor = Theme.Card; d.ForeColor = Theme.Text; d.SelectionBackColor = Theme.Selection; d.SelectionForeColor = Theme.Text;
-        d.Font = BaseFont; g.Font = BaseFont;
+        if (!ReferenceEquals(d.Font, BaseFont)) d.Font = BaseFont;
+        if (!ReferenceEquals(g.Font, BaseFont)) g.Font = BaseFont;
         d.Padding = new Padding(G.P(6), 0, G.P(6), 0);
         var rh = g.RowHeadersDefaultCellStyle;
         rh.BackColor = Theme.Card; rh.SelectionBackColor = Theme.Selection; rh.ForeColor = Theme.TextDim;
@@ -890,16 +912,77 @@ public static class UI
         g.Invalidate();
     }
 
+    // 會換行的說明文字：寬度跟著外框走，視窗拉寬就排開、拉窄就換行，不會被切掉看不到
+    static readonly HashSet<Label> wrapLabels = new HashSet<Label>();
+    static readonly HashSet<Label> notWrap = new HashSet<Label>();
+    public static void FitWrapLabels(Control box)
+    {
+        if (box.Width <= 0) return;
+        foreach (Control ch in box.Controls) FitWalk(ch, box);
+    }
+    static void FitWalk(Control c, Control box)
+    {
+        if (c is Card || c is ScrollHost) return;          // 裡面的卡片、捲動區自己會處理
+        var l = c as Label;
+        if (l != null && l.AutoSize)
+        {
+            if (!wrapLabels.Contains(l) && !notWrap.Contains(l)) { if (l.MaximumSize.Width > 0) wrapLabels.Add(l); else notWrap.Add(l); }
+            if (wrapLabels.Contains(l))
+            {
+                int x = 0; Control p = l;
+                while (p != null && p != box) { x += p.Left; p = p.Parent; }
+                if (p == box)
+                {
+                    int want = Math.Max(G.P(140), box.ClientSize.Width - box.Padding.Right - x - l.Margin.Right - G.P(6));
+                    if (Math.Abs(l.MaximumSize.Width - want) > 2) l.MaximumSize = new Size(want, 0);
+                }
+            }
+            return;
+        }
+        foreach (Control ch in c.Controls) FitWalk(ch, box);
+    }
+
+    // 對話框：先依內容決定大小，之後可以拉邊框放大（欄位會跟著變寬）
     public static Form NewDialog(Form owner, string title)
     {
         var f = new Form {
             Text = title, Font = owner != null ? owner.Font : BaseFont, StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false,
+            FormBorderStyle = FormBorderStyle.Sizable, MaximizeBox = true, MinimizeBox = false, ShowInTaskbar = false,
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(G.P(18)),
+            SizeGripStyle = SizeGripStyle.Show,
         };
         if (owner != null && owner.Icon != null) f.Icon = owner.Icon;
         f.HandleCreated += (s, e) => Theme.StyleTitleBar(f);
+        f.Load += (s, e) => {
+            var sz = f.Size;
+            var wa = Screen.FromControl(f).WorkingArea;
+            sz = new Size(Math.Min(sz.Width, wa.Width), Math.Min(sz.Height, wa.Height));
+            f.AutoSize = false;
+            f.MinimumSize = new Size(Math.Min(sz.Width, G.P(360)), Math.Min(sz.Height, G.P(200)));
+            f.Size = sz;
+            Stretch(f);
+            var loc = f.Location;   // 放大後別超出螢幕
+            if (loc.X + sz.Width > wa.Right) loc.X = Math.Max(wa.Left, wa.Right - sz.Width);
+            if (loc.Y + sz.Height > wa.Bottom) loc.Y = Math.Max(wa.Top, wa.Bottom - sz.Height);
+            f.Location = loc;
+        };
         return f;
+    }
+    // 固定寬度的欄改成按比例，拉大對話框時輸入框會跟著變寬
+    static void Stretch(Control c)
+    {
+        var t = c as TableLayoutPanel;
+        if (t != null && t.Dock == DockStyle.Fill)
+        {
+            bool any = false;
+            foreach (ColumnStyle cs in t.ColumnStyles) if (cs.SizeType == SizeType.Absolute) any = true;
+            if (any)
+            {
+                foreach (ColumnStyle cs in t.ColumnStyles) if (cs.SizeType == SizeType.Absolute) cs.SizeType = SizeType.Percent;   // 原本的寬度當作比例
+                t.AutoSize = false;
+            }
+        }
+        foreach (Control ch in c.Controls) Stretch(ch);
     }
 
     // 有幾個按鈕可選的對話框，第一個按鈕是主要動作；傳回按下的是第幾個（關掉 = -1）

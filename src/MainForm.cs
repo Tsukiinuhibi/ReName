@@ -54,7 +54,7 @@ public class MainForm : Form
         Font = UI.BaseFont;
         Text = "批量改名工具 v" + Updater.CurrentText;
         Size = new Size(G.P(1240), G.P(860));
-        MinimumSize = new Size(G.P(860), G.P(560));
+        MinimumSize = new Size(G.P(640), G.P(440));   // 可以縮得比較小；太小時內容會換行或出現捲軸
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true; KeyPreview = true;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -265,6 +265,12 @@ public class MainForm : Form
         Tip(btnThemeToggle, "切換亮色／暗色");
         btnThemeToggle.Click += (s, e) => { cfg.ThemeMode = Theme.Dark ? "light" : "dark"; ApplyTheme(); };
         header.Controls.Add(brand, 0, 0); header.Controls.Add(tabs, 1, 0); header.Controls.Add(btnThemeToggle, 2, 0);
+        // 視窗拉窄時先把左上的標題藏起來，讓分頁按鈕永遠看得到
+        header.Resize += (s, e) => {
+            int need = header.Padding.Horizontal + brand.PreferredSize.Width + tabs.Width + tabs.Margin.Horizontal + btnThemeToggle.Width + btnThemeToggle.Margin.Horizontal + G.P(8);
+            bool show = header.Width >= need;
+            if (brand.Visible != show) brand.Visible = show;
+        };
         root.Controls.Add(header, 0, 0);
 
         root.Controls.Add(BuildUpdateBar(), 0, 1);
@@ -288,26 +294,42 @@ public class MainForm : Form
     // 切換分頁：只把正在看的那一頁放在畫面上，切過去時再依目前的視窗大小重新排版
     // （隱藏的頁面不會在背景重算版面，避免切回來時版面破碎）
     Panel pageHost;
+    readonly Dictionary<Control, int> pageGen = new Dictionary<Control, int>();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+    void Redraw(Control c, bool on)
+    {
+        if (Environment.OSVersion.Platform != PlatformID.Win32NT || !c.IsHandleCreated) return;
+        try { SendMessage(c.Handle, 0x000B, (IntPtr)(on ? 1 : 0), IntPtr.Zero); } catch { }   // WM_SETREDRAW：換頁時先停止重畫，換好再一次畫出來
+    }
     void ShowPage(int i)
     {
         if (i < 0 || i >= pages.Count) return;
         var page = pages[i];
         if (pageHost.Controls.Count == 1 && pageHost.Controls[0] == page) return;
-        pageHost.SuspendLayout();
+        Redraw(pageHost, false);
         try
         {
-            pageHost.Controls.Clear();
-            pageHost.Controls.Add(page);
-            UI.Apply(page); ApplyFonts(page);
+            pageHost.SuspendLayout();
+            try
+            {
+                pageHost.Controls.Clear();
+                pageHost.Controls.Add(page);
+                int g;
+                if (!pageGen.TryGetValue(page, out g) || g != Theme.Gen)   // 只有換過配色才需要重新上色
+                {
+                    UI.Apply(page); ApplyFonts(page);
+                    pageGen[page] = Theme.Gen;
+                }
+            }
+            finally { pageHost.ResumeLayout(true); }
+            RestoreSplits();
+            // 只更新這一頁自己的內容；檔案清單只有在設定變過時才重算
+            if (i == 4) ShowFormat();
+            if (i == 3) ShowList();
+            if (i == 2) ShowCategory();
+            if (i == 0 && rowsStale) RefreshAll();
         }
-        finally { pageHost.ResumeLayout(true); }
-        page.PerformLayout();
-        RestoreSplits();
-        if (i == 4) ShowFormat();
-        if (i == 3) ShowList();
-        if (i == 2) ShowCategory();
-        RefreshAll();
-        page.Invalidate(true);
+        finally { Redraw(pageHost, true); pageHost.Invalidate(true); }
     }
 
     // ---------- 更新提示列 ----------
@@ -1218,7 +1240,7 @@ public class MainForm : Form
         fmtCustomDates.Visible = DateStyle.Find(f.DateStyleId) == null;
         cbFmtMonth.Checked = f.UseMonthFormat;
         fmtLoading = false;
-        UI.Apply(fmtEditor.Parent); ApplyFonts(fmtEditor);
+        UI.Apply(fmtCats, Theme.Card);   // 只替新加的勾選框上色，不用整頁重來
         UpdateFormatPreview();
     }
 
@@ -1250,8 +1272,10 @@ public class MainForm : Form
         var f = CurFmt(); if (f == null || fmtPreview == null) return;
         var map = Core.BuildMap(cfg);
         var samples = new List<string>();
+        int scanned = 0;
         foreach (var r in rows)
         {
+            if (++scanned > 300) break;   // 檔案很多時只看前 300 個找例子，不然切到這頁會卡
             var p = Core.Process(r.Stem, cfg, map);
             if (p.Ok && p.UsedRule == null && p.Format == f) samples.Add(r.Stem);
             if (samples.Count >= 6) break;
@@ -1374,7 +1398,7 @@ public class MainForm : Form
         BuildLookTiles();
         UI.Apply(this);
         ApplyFonts(this);
-        foreach (var p in pages) if (p.Parent == null) { UI.Apply(p); }
+        foreach (var p in pages) { if (p.Parent == null) UI.Apply(p); pageGen[p] = Theme.Gen; }
         ResumeLayout();
         FillGrid(); FillLearnGrid(); ShowCategory(); UpdateTest();
         Theme.StyleTitleBar(this);
@@ -1462,11 +1486,17 @@ public class MainForm : Form
         }
     }
 
+    bool rowsStale;
     void RefreshAll()
     {
         if (loading) return;
-        Core.UpdateRows(rows, cfg);
-        FillGrid();
+        if (tabs.SelectedIndex == 0 || rows.Count == 0)
+        {
+            Core.UpdateRows(rows, cfg);
+            FillGrid();
+            rowsStale = false;
+        }
+        else rowsStale = true;   // 不在改名頁時先不重算檔案清單，切回改名頁才算，其他頁面就不會卡
         UpdateTest();
         if (tabs.SelectedIndex == 4 && fmtList.FindForm() != null) { fmtList.Invalidate(); UpdateFormatPreview(); }
         if (tabs.SelectedIndex == 2) catList.Invalidate();
@@ -1477,27 +1507,34 @@ public class MainForm : Form
     {
         filling = true;
         int first = grid.FirstDisplayedScrollingRowIndex;
-        grid.SuspendLayout();
-        grid.Rows.Clear();
-        foreach (var r in rows)
+        Redraw(grid, false);
+        try
         {
-            int i = grid.Rows.Add(r.Ok && !r.Excluded, r.OldName, r.NewName, r.Status);
-            var gr = grid.Rows[i];
-            gr.Tag = r;
-            var st = gr.Cells["Status"].Style;
-            if (r.Ok)
+            grid.Rows.Clear();
+            var list = new DataGridViewRow[rows.Count];
+            for (int k = 0; k < rows.Count; k++)
             {
-                if (r.Manual) gr.DefaultCellStyle.BackColor = Theme.InfoSoft;
-                st.ForeColor = r.Excluded ? Theme.TextDim : Theme.Success;
+                var r = rows[k];
+                var gr = new DataGridViewRow();
+                gr.CreateCells(grid, r.Ok && !r.Excluded, r.OldName, r.NewName, r.Status);
+                gr.Height = grid.RowTemplate.Height;
+                gr.Tag = r;
+                var st = gr.Cells[grid.Columns["Status"].Index].Style;
+                if (r.Ok)
+                {
+                    if (r.Manual) gr.DefaultCellStyle.BackColor = Theme.InfoSoft;
+                    st.ForeColor = r.Excluded ? Theme.TextDim : Theme.Success;
+                }
+                else if (r.Status == Core.StatusSame) { gr.DefaultCellStyle.ForeColor = Theme.TextDim; }
+                else { gr.DefaultCellStyle.BackColor = Theme.DangerSoft; st.ForeColor = Theme.Danger; }
+                st.SelectionForeColor = st.ForeColor.IsEmpty ? Theme.Text : st.ForeColor;
+                list[k] = gr;
             }
-            else if (r.Status == Core.StatusSame) { gr.DefaultCellStyle.ForeColor = Theme.TextDim; }
-            else { gr.DefaultCellStyle.BackColor = Theme.DangerSoft; st.ForeColor = Theme.Danger; }
-            st.SelectionForeColor = st.ForeColor.IsEmpty ? Theme.Text : st.ForeColor;
+            if (list.Length > 0) grid.Rows.AddRange(list);   // 一次加入，比一列一列加快很多
+            try { if (first >= 0 && first < grid.Rows.Count) grid.FirstDisplayedScrollingRowIndex = first; } catch { }
+            grid.ClearSelection();
         }
-        try { if (first >= 0 && first < grid.Rows.Count) grid.FirstDisplayedScrollingRowIndex = first; } catch { }
-        grid.ResumeLayout();
-        grid.ClearSelection();
-        UI.StyleGrid(grid);
+        finally { Redraw(grid, true); grid.Invalidate(); }
         lblEmpty.Visible = rows.Count == 0;
         filling = false;
         UpdateCount();
@@ -1805,7 +1842,34 @@ static class Program
                 catch { }
             }
         }
-        if (form != null) Application.Run(form);
+        if (form == null) return;
+        StartWatchdog(form);
+        Application.Run(form);
+    }
+
+    // 開啟看門狗：視窗 40 秒還沒出現，就把程式卡在哪裡記到錯誤紀錄，並告訴使用者（不會再「完全沒反應」卻不知道原因）
+    static readonly System.Threading.ManualResetEvent shownSignal = new System.Threading.ManualResetEvent(false);
+    static void StartWatchdog(MainForm form)
+    {
+        form.Shown += (s, e) => shownSignal.Set();
+        var ui = System.Threading.Thread.CurrentThread;
+        var t = new System.Threading.Thread(() => {
+            if (shownSignal.WaitOne(40000)) return;
+            string where = "";
+            try
+            {
+#pragma warning disable 618
+                ui.Suspend();
+                try { where = new System.Diagnostics.StackTrace(ui, false).ToString(); }
+                finally { ui.Resume(); }
+#pragma warning restore 618
+            }
+            catch (Exception ex) { where = "（無法取得：" + ex.Message + "）"; }
+            string log = WriteCrashLog(new TimeoutException("開啟超過 40 秒視窗還沒出現，程式卡在：\r\n" + where));
+            MessageBox.Show("程式開啟太久沒有反應。\r\n\r\n卡住的位置已記錄到：\r\n" + log + "\r\n\r\n請把這個檔案傳給開發者。可以按「確定」後繼續等，或用工作管理員結束「批量改名工具」。",
+                "批量改名工具", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        });
+        t.IsBackground = true; t.Start();
     }
 
     static string WriteCrashLog(Exception ex)

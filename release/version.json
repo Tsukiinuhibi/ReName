@@ -1,6 +1,6 @@
 {
-  "version": "3.2.1",
+  "version": "3.3.0",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "f51208c7d329dd30190592653bacc116b60428dbcea77724bcd1bde9e947c2b8",
-  "notes": "修正 3.2.0 在 Windows 上開不起來的問題；加上開啟保護（開啟失敗會顯示原因、存錯誤紀錄，並可用預設設定重新開啟）"
+  "sha256": "78fd08876096766c2f099f3016c03ef70cf2a9d02d5552a2854af00e45f52cb3",
+  "notes": "切換分頁變快；所有對話框都能拉大小；文字跟著視窗寬度換行"
 }

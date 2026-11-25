@@ -62,8 +62,11 @@ public static class Theme
         return false;
     }
 
+    // 每次換配色就加一，用來判斷某個畫面是不是已經套用過目前的配色（切分頁時不用每次重新上色）
+    public static int Gen = 1;
     public static void Set(bool dark, Color accent)
     {
+        Gen++;
         Dark = dark;
         if (dark)
         {
