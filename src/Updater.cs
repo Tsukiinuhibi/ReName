@@ -12,8 +12,8 @@ using System.Text.RegularExpressions;
 
 [assembly: AssemblyTitle("批量改名工具")]
 [assembly: AssemblyProduct("批量改名工具")]
-[assembly: AssemblyVersion("1.7.2.0")]
-[assembly: AssemblyFileVersion("1.7.2.0")]
+[assembly: AssemblyVersion("3.0.0.0")]
+[assembly: AssemblyFileVersion("3.0.0.0")]
 
 public class UpdateInfo
 {

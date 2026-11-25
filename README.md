@@ -23,7 +23,8 @@ Windows 用的批量改檔名小工具。選取或拖曳檔案進來，程式會
 
 ```bash
 # 1. 修改 src/ 裡的程式
-# 2. 把 src/Updater.cs 的 AssemblyVersion / AssemblyFileVersion 改成新版本號
+# 2. 依更新大小決定新版本號（大型.中型.小型，見 CHANGELOG.md），改 src/Updater.cs 的 AssemblyVersion / AssemblyFileVersion，
+#    並在 src/Changelog.cs、CHANGELOG.md 加上這一版的說明
 ./publish.sh "這次更新的內容"
 git add -A && git commit -m "批量改名工具 vX.Y.Z" && git push <Forgejo 遠端> main
 ```
@@ -34,8 +35,13 @@ git add -A && git commit -m "批量改名工具 vX.Y.Z" && git push <Forgejo 遠
 
 | 路徑 | 說明 |
 |---|---|
-| `src/Core.cs` | 檔名辨識、範例學習、改名與還原 |
-| `src/MainForm.cs` | 視窗介面 |
+| `src/Core.cs` | 檔名辨識、分類與格式、範例學習、改名與還原 |
+| `src/MainForm.cs` | 主視窗與各分頁 |
+| `src/Controls.cs` | 圓角按鈕、膠囊分頁、卡片、輸入框、色環等介面元件 |
+| `src/Theme.cs` | 亮色／暗色／跟隨系統、配色 |
+| `src/RuleEditor.cs` | 編輯學到的規則 |
+| `src/Changelog.cs` | 程式內顯示的更新紀錄 |
 | `src/Updater.cs` | 自動更新、版本號 |
+| `CHANGELOG.md` | 更新紀錄 |
 | `build.sh` | 編譯（Mono `mcs`） |
 | `publish.sh` | 編譯並產生 `release/version.json` |

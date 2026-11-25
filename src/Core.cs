@@ -20,8 +20,11 @@ public class Rule
 // 從範例學到的規則：文件名稱（原本寫法）一樣的檔案，改用這個格式
 public class Learned
 {
+    public const string AnyCase = "*";
     public bool   Enabled = true;
     public string DocKey = "";
+    // 學到這條規則時檔名的「情況」（日期種類、廠商數、有沒有編號/備註/頻率）；"*" = 任何情況
+    public string Signature = "";
     public string Template = "";
     public string ExampleFrom = "";
     public string ExampleTo = "";
@@ -33,9 +36,69 @@ public class LearnResult
     public Learned Rule; public string Got = "";
 }
 
+// 名稱對照：分類 → 項目（原本的名稱 → 改成）
+public class MapItem
+{
+    public string From = "";
+    public string To = "";      // 留空 = 不換名，只是歸在這個分類
+}
+
+public class Category
+{
+    public string Name = "";
+    public string Note = "";    // 分類的註解，沒寫就不顯示
+    public List<MapItem> Items = new List<MapItem>();
+}
+
+// 日期寫法的預設樣式
+public class DateStyle
+{
+    public string Id, Name, Range, Cross, Month, Single, Year;
+    public static readonly DateStyle[] All = {
+        new DateStyle { Id = "zh",  Name = "115年5月01至5月31",
+            Range = "{年}年{月}月{日0}至{迄月}月{迄日0}", Cross = "{年}年{月}月{日0}至{迄年}年{迄月}月{迄日0}", Month = "{年}年{月}月", Single = "{年}年{月}月{日0}", Year = "{年}年" },
+        new DateStyle { Id = "zh2", Name = "115年5月1日至5月31日",
+            Range = "{年}年{月}月{日}日至{迄月}月{迄日}日", Cross = "{年}年{月}月{日}日至{迄年}年{迄月}月{迄日}日", Month = "{年}年{月}月", Single = "{年}年{月}月{日}日", Year = "{年}年" },
+        new DateStyle { Id = "dot", Name = "115.05.01-05.31",
+            Range = "{年}.{月0}.{日0}-{迄月0}.{迄日0}", Cross = "{年}.{月0}.{日0}-{迄年}.{迄月0}.{迄日0}", Month = "{年}.{月0}", Single = "{年}.{月0}.{日0}", Year = "{年}" },
+        new DateStyle { Id = "num", Name = "1150501-0531",
+            Range = "{年}{月0}{日0}-{迄月0}{迄日0}", Cross = "{年}{月0}{日0}-{迄年}{迄月0}{迄日0}", Month = "{年}{月0}", Single = "{年}{月0}{日0}", Year = "{年}" },
+        new DateStyle { Id = "iso", Name = "2026-05-01~05-31（西元）",
+            Range = "{西元年}-{月0}-{日0}~{迄月0}-{迄日0}", Cross = "{西元年}-{月0}-{日0}~{迄西元年}-{迄月0}-{迄日0}", Month = "{西元年}-{月0}", Single = "{西元年}-{月0}-{日0}", Year = "{西元年}" },
+    };
+    public static DateStyle Find(string id) { foreach (var d in All) if (d.Id == id) return d; return null; }
+}
+
+// 一種檔名格式，可以指定給名稱對照裡的分類
+public class NameFormat
+{
+    public string Name = "預設格式";
+    public bool   IsDefault;
+    public List<string> Categories = new List<string>();
+    public string Template        = Settings.DefaultTemplate;
+    public string DateStyleId     = "zh";     // DateStyle.Id，或 "custom"
+    public string RangeFormat     = "{年}年{月}月{日0}至{迄月}月{迄日0}";
+    public string CrossYearFormat = "{年}年{月}月{日0}至{迄年}年{迄月}月{迄日0}";
+    public string MonthFormat     = "{年}年{月}月";
+    public string SingleFormat    = "{年}年{月}月{日0}";
+    public string YearFormat      = "{年}年";
+    public bool   UseMonthFormat  = true;
+
+    public void ApplyStyle(DateStyle d)
+    {
+        DateStyleId = d.Id; RangeFormat = d.Range; CrossYearFormat = d.Cross; MonthFormat = d.Month; SingleFormat = d.Single; YearFormat = d.Year;
+    }
+    public NameFormat Copy()
+    {
+        var f = (NameFormat)MemberwiseClone();
+        f.Categories = new List<string>(Categories);
+        return f;
+    }
+}
+
 public class Settings
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     public const string V2Template = "{公司}-{文件}{頻率}-{日期}-{廠商1}-{廠商2}-{編號}";
     public const string DefaultTemplate = "{公司}-{文件}{頻率}-{日期}-{廠商1}-{廠商2}-{編號}{備註}";
     public const string DefaultRemarks = "END\n退場\n作廢\n結案\n停用\n註銷\n補件\n暫停\n取消\n過期";
@@ -59,7 +122,23 @@ public class Settings
     public string Remarks         = DefaultRemarks;
     public List<Rule> Rules       = new List<Rule>();
     public List<Learned> LearnedRules = new List<Learned>();
+    public List<Category> Categories = new List<Category>();
+    public List<NameFormat> Formats = new List<NameFormat>();
+    public string ThemeMode = "system";        // system / light / dark
+    public string Accent = "暖陽橘";            // 預設配色名稱，或 "custom"
+    public string CustomAccent = "";            // #RRGGBB
     public Settings Clone() { return (Settings)MemberwiseClone(); }
+
+    // 沒有設定格式清單時（例如舊版設定），用舊欄位組出預設格式
+    public NameFormat DefaultFormat()
+    {
+        foreach (var f in Formats) if (f.IsDefault) return f;
+        return new NameFormat {
+            Name = "預設格式", IsDefault = true, Template = NameTemplate, DateStyleId = "custom",
+            RangeFormat = RangeFormat, CrossYearFormat = CrossYearFormat, MonthFormat = MonthFormat,
+            SingleFormat = SingleFormat, YearFormat = YearFormat, UseMonthFormat = UseMonthFormat,
+        };
+    }
     public bool   RulesSeeded;
 }
 
@@ -68,6 +147,8 @@ public class ProcessResult
     public bool Ok; public string Pre = "", Parsed = "", Final = "", Error = "";
     public List<KeyValuePair<string, string>> Parts;
     public Learned UsedRule;
+    public string Category = "";
+    public NameFormat Format;
     public List<string> RuleErrors = new List<string>();
 }
 
@@ -86,6 +167,9 @@ public class StemResult
     public List<KeyValuePair<string, string>> Parts;
     public List<KeyValuePair<string, string>> Vals;   // 所有可用代碼的值（給範例學習用）
     public string RawDoc = "";
+    public string Sig = "";
+    public string Category = "";
+    public NameFormat Format;
     public Learned UsedRule;
 }
 
@@ -133,6 +217,73 @@ public static class Core
             if (k.Length > 0) map[k] = t.Substring(i + 1).Trim();
         }
         return map;
+    }
+
+    // 第 4 版：名稱對照改成分類、檔名格式改成清單
+    public static void MigrateToV4(Settings c)
+    {
+        if (c.Categories == null) c.Categories = new List<Category>();
+        if (c.Formats == null) c.Formats = new List<NameFormat>();
+        if (c.Categories.Count == 0)
+        {
+            var check = new Category { Name = "檢查表", Note = "各種機具、車輛的檢查表與查驗表" };
+            var apply = new Category { Name = "作業申請", Note = "吊掛、動火、高架、局限空間等作業許可" };
+            var other = new Category { Name = "未分類" };
+            foreach (var kv in ParseWorkMap(c.WorkMap))
+            {
+                var it = new MapItem { From = kv.Key, To = kv.Value };
+                string all = kv.Key + kv.Value;
+                if (all.Contains("檢查") || all.Contains("查驗")) check.Items.Add(it);
+                else if (all.Contains("申請") || all.Contains("吊掛") || all.Contains("動火") || all.Contains("高架") || all.Contains("局限") || all.Contains("侷限")) apply.Items.Add(it);
+                else other.Items.Add(it);
+            }
+            c.Categories.Add(check); c.Categories.Add(apply);
+            if (other.Items.Count > 0) c.Categories.Add(other);
+        }
+        if (c.Formats.Count == 0)
+        {
+            var d = c.DefaultFormat();          // 由舊欄位組成
+            d.Name = "預設格式"; d.IsDefault = true;
+            foreach (var st in DateStyle.All)
+                if (st.Range == d.RangeFormat && st.Cross == d.CrossYearFormat && st.Month == d.MonthFormat && st.Single == d.SingleFormat && st.Year == d.YearFormat)
+                    d.DateStyleId = st.Id;
+            c.Formats.Add(d);
+        }
+        c.Version = Settings.CurrentVersion;
+    }
+
+    // 名稱對照：有分類就用分類，沒有就用舊的文字對照表
+    public static Dictionary<string, string> BuildMap(Settings c)
+    {
+        if (c.Categories == null || c.Categories.Count == 0) return ParseWorkMap(c.WorkMap);
+        var map = new Dictionary<string, string>();
+        foreach (var cat in c.Categories)
+            foreach (var it in cat.Items)
+            {
+                string f = (it.From ?? "").Trim(), t = (it.To ?? "").Trim();
+                if (f.Length > 0 && t.Length > 0 && !map.ContainsKey(f)) map[f] = t;
+            }
+        return map;
+    }
+
+    // 文件屬於哪個分類：原本的名稱或換名後的名稱出現在分類的項目裡
+    public static string CategoryOf(Settings c, string rawDoc, string doc)
+    {
+        if (c.Categories == null) return "";
+        foreach (var cat in c.Categories)
+            foreach (var it in cat.Items)
+            {
+                string f = (it.From ?? "").Trim(), t = (it.To ?? "").Trim();
+                if ((f.Length > 0 && (f == rawDoc || f == doc)) || (t.Length > 0 && (t == doc || t == rawDoc))) return cat.Name;
+            }
+        return "";
+    }
+
+    public static NameFormat FormatFor(Settings c, string category)
+    {
+        if (category.Length > 0 && c.Formats != null)
+            foreach (var f in c.Formats) if (!f.IsDefault && f.Categories.Contains(category)) return f;
+        return c.DefaultFormat();
     }
 
     public static HashSet<string> ParseList(string text)
@@ -227,7 +378,7 @@ public static class Core
 
     static KeyValuePair<string, string> KV(string k, object v) { return new KeyValuePair<string, string>(k, Convert.ToString(v)); }
 
-    static string FormatDate(DateKind kind, DateTime s, DateTime? eN, Settings c)
+    static string FormatDate(DateKind kind, DateTime s, DateTime? eN, NameFormat c)
     {
         string tpl;
         var e = eN ?? s;
@@ -367,8 +518,11 @@ public static class Core
         if (map.TryGetValue(doc, out mapped)) doc = mapped;
 
         string freq = freqs.Count > 0 ? freqs[0] : "";
+        string sig = MakeSignature(dm == null ? "none" : kind.ToString().ToLowerInvariant(), names.Count, codes.Count > 0, remarks.Count > 0, freq.Length > 0);
         string other = freqs.Count > 1 ? string.Join("", freqs.GetRange(1, freqs.Count - 1).ToArray()) : "";
-        string date = dm == null ? "" : FormatDate(kind, start, end, c);
+        string category = CategoryOf(c, rawDoc, doc);
+        var fmt = FormatFor(c, category);
+        string date = dm == null ? "" : FormatDate(kind, start, end, fmt);
 
         var parts = new List<KeyValuePair<string, string>> {
             KV("公司", company), KV("文件", doc), KV("頻率", freq), KV("日期", date),
@@ -384,6 +538,7 @@ public static class Core
         vals.Add(KV("作業", doc + freq));
         // 不含括號的版本
         vals.Add(KV("頻率文字", freq.Trim('(', ')')));
+        vals.Add(KV("文件原名", rawDoc));   // 對照表換名之前的寫法
         vals.Add(KV("編號文字", string.Join("-", codes.ConvertAll(x => x.Trim('(', ')')).ToArray())));
         vals.Add(KV("備註文字", string.Join("-", remarks.ToArray())));
         // 日期的各個部分也可以直接放進檔名格式
@@ -398,11 +553,10 @@ public static class Core
         }
         else foreach (var k in new[] { "年", "西元年", "月", "月0", "日", "日0", "迄年", "迄西元年", "迄月", "迄月0", "迄日", "迄日0" }) vals.Add(KV(k, ""));
 
-        Learned used = null;
-        if (useLearned && c.LearnedRules != null)
-            foreach (var l in c.LearnedRules) if (l.Enabled && l.DocKey == rawDoc && rawDoc.Length > 0) { used = l; break; }
-        string tpl = used != null ? used.Template : c.NameTemplate;
-        return new StemResult { Ok = true, Name = FillTemplate(tpl, vals), Parts = parts, Vals = vals, RawDoc = rawDoc, UsedRule = used };
+        Learned used = useLearned ? SelectRule(c.LearnedRules, rawDoc, sig) : null;
+        string tpl = used != null ? used.Template : fmt.Template;
+        return new StemResult { Ok = true, Name = FillTemplate(tpl, vals), Parts = parts, Vals = vals, RawDoc = rawDoc, Sig = sig, UsedRule = used,
+                                Category = category, Format = fmt };
     }
 
     // ---------- 進階規則 ----------
@@ -429,11 +583,65 @@ public static class Core
         p.Pre = ApplyRules(stem, c.Rules, Rule.StageBefore, p.RuleErrors);
         var res = GetNewStem(p.Pre, c, map);
         if (!res.Ok) { p.Error = res.Error; return p; }
-        p.Parsed = res.Name; p.Parts = res.Parts; p.UsedRule = res.UsedRule;
+        p.Parsed = res.Name; p.Parts = res.Parts; p.UsedRule = res.UsedRule; p.Category = res.Category; p.Format = res.Format;
         string fin = ApplyRules(res.Name, c.Rules, Rule.StageAfter, p.RuleErrors);
         if (fin != res.Name) fin = MultiDash.Replace(fin, "-").Trim(TrimChars);
         p.Final = fin; p.Ok = true;
         return p;
+    }
+
+    // ---------- 規則的「情況」 ----------
+    static string MakeSignature(string date, int vendors, bool code, bool remark, bool freq)
+    {
+        return "D=" + date + ";V=" + Math.Min(vendors, 2) + ";C=" + (code ? 1 : 0) + ";R=" + (remark ? 1 : 0) + ";F=" + (freq ? 1 : 0);
+    }
+
+    static Dictionary<string, string> SigParts(string sig)
+    {
+        var d = new Dictionary<string, string>();
+        foreach (var p in (sig ?? "").Split(';')) { int i = p.IndexOf('='); if (i > 0) d[p.Substring(0, i)] = p.Substring(i + 1); }
+        return d;
+    }
+
+    public static bool IsAnyCase(string sig) { return string.IsNullOrEmpty(sig) || sig == Learned.AnyCase; }
+
+    // 同一個文件有好幾條規則時：情況完全一樣的優先，其次是「任何情況」，最後挑最接近的
+    public static Learned SelectRule(List<Learned> rules, string rawDoc, string sig)
+    {
+        if (rules == null || rawDoc.Length == 0) return null;
+        Learned any = null, best = null; int bestScore = -1;
+        var want = SigParts(sig);
+        foreach (var l in rules)
+        {
+            if (!l.Enabled || l.DocKey != rawDoc) continue;
+            if (!IsAnyCase(l.Signature) && l.Signature == sig) return l;
+            if (IsAnyCase(l.Signature)) { if (any == null) any = l; continue; }
+            int score = 0; var have = SigParts(l.Signature);
+            foreach (var kv in want) { string v; if (have.TryGetValue(kv.Key, out v) && v == kv.Value) score += kv.Key == "D" ? 2 : 1; }
+            if (score > bestScore) { bestScore = score; best = l; }
+        }
+        return any ?? best;
+    }
+
+    public static string DescribeSignature(string sig)
+    {
+        if (IsAnyCase(sig)) return "任何情況";
+        var d = SigParts(sig); var list = new List<string>(); string v;
+        if (d.TryGetValue("D", out v))
+            list.Add(v == "none" ? "沒有日期" : v == "year" ? "日期只有年" : v == "month" ? "日期是年月" : v == "day" ? "日期是單一天" : "日期是區間");
+        if (d.TryGetValue("V", out v)) list.Add(v == "0" ? "沒有廠商" : v == "1" ? "1 個廠商" : "2 個廠商");
+        if (d.TryGetValue("C", out v) && v == "1") list.Add("有編號");
+        if (d.TryGetValue("R", out v) && v == "1") list.Add("有備註");
+        if (d.TryGetValue("F", out v) && v == "1") list.Add("有頻率");
+        return string.Join("、", list.ToArray());
+    }
+
+    // 不套用學到的規則，算出某個原檔名的「情況」；看不懂時回傳 null
+    public static string SignatureOf(string stem, Settings c)
+    {
+        string pre = ApplyRules(stem ?? "", c.Rules, Rule.StageBefore, null);
+        var r = GetNewStem(pre, c, BuildMap(c), false);
+        return r.Ok ? r.Sig : null;
     }
 
     // ---------- 範例學習 ----------
@@ -456,6 +664,7 @@ public static class Core
         switch (token)
         {
             case "{頻率}": case "{頻率文字}": return "freq";
+            case "{文件}": case "{文件原名}": return "doc";
             case "{編號}": case "{編號文字}": return "code";
             case "{備註}": case "{備註文字}": return "remark";
             default: return token;
@@ -498,6 +707,7 @@ public static class Core
             {
                 string p = ms[j].Value;
                 int k = learned.LastIndexOf(p, StringComparison.Ordinal);
+                if (k < 0 && p == "{文件}") { k = learned.LastIndexOf("{文件原名}", StringComparison.Ordinal); if (k >= 0) p = "{文件原名}"; }
                 if (k >= 0) insertAt = k + p.Length;
                 else if (p == "{日期}")
                 {
@@ -517,7 +727,7 @@ public static class Core
         var lr = new LearnResult();
         src = (src ?? "").Trim(); target = (target ?? "").Trim();
         if (src.Length == 0 || target.Length == 0) { lr.Error = "原檔名和想要的結果都要填。"; return lr; }
-        var map = ParseWorkMap(c.WorkMap);
+        var map = BuildMap(c);
         string pre = ApplyRules(src, c.Rules, Rule.StageBefore, null);
         var res = GetNewStem(pre, c, map, false);
 
@@ -593,8 +803,8 @@ public static class Core
         string tpl = sb.ToString();
         if (!tpl.Contains("{")) { lr.Error = "結果裡找不到任何來自原檔名的部分（公司、日期…），看不出規律。"; return lr; }
 
-        tpl = FillMissing(tpl, c.NameTemplate, res.Vals);
-        var rule = new Learned { DocKey = res.RawDoc, Template = tpl, ExampleFrom = src, ExampleTo = target };
+        tpl = FillMissing(tpl, (res.Format ?? c.DefaultFormat()).Template, res.Vals);
+        var rule = new Learned { DocKey = res.RawDoc, Signature = res.Sig, Template = tpl, ExampleFrom = src, ExampleTo = target };
         // 驗證：用學到的規則重跑一次原檔名，要和想要的結果一樣
         var c3 = c.Clone();
         c3.LearnedRules = new List<Learned> { rule };
@@ -604,6 +814,35 @@ public static class Core
         { lr.Error = "學到的規則套回去得到的是「" + lr.Got + "」，和你要的不一樣。"; lr.Rule = rule; return lr; }
         lr.Ok = true; lr.Rule = rule;
         return lr;
+    }
+
+    // ---------- 學新範例前先判斷：重複？衝突？新的情況？ ----------
+    public enum LearnAction { Failed, AlreadyWorks, ReEnable, NewRule, NewCase, Conflict }
+    public class LearnPlan { public LearnAction Action; public Learned Existing; public LearnResult Res; }
+
+    public static LearnPlan PlanLearn(string src, string target, Settings c)
+    {
+        var plan = new LearnPlan();
+        plan.Res = Learn(src, target, c);
+        if (!plan.Res.Ok) { plan.Action = LearnAction.Failed; return plan; }
+        var rule = plan.Res.Rule;
+        var rules = c.LearnedRules ?? new List<Learned>();
+
+        // 1. 現在的規則本來就會改成這樣 → 不用再學
+        var now = Process(src.Trim(), c, BuildMap(c));
+        if (now.Ok && now.Final == target.Trim()) { plan.Action = LearnAction.AlreadyWorks; plan.Existing = now.UsedRule; return plan; }
+
+        // 2. 有一條一模一樣、但暫停使用的規則 → 重新啟用就好
+        foreach (var l in rules)
+            if (!l.Enabled && l.DocKey == rule.DocKey && l.Template == rule.Template && (l.Signature == rule.Signature || IsAnyCase(l.Signature)))
+            { plan.Action = LearnAction.ReEnable; plan.Existing = l; return plan; }
+
+        // 3. 看看這個檔案目前是被哪一條規則改的
+        var used = now.Ok ? now.UsedRule : null;
+        if (used == null) { plan.Action = LearnAction.NewRule; return plan; }
+        plan.Existing = used;
+        plan.Action = (!IsAnyCase(used.Signature) && used.Signature == rule.Signature) ? LearnAction.Conflict : LearnAction.NewCase;
+        return plan;
     }
 
     // ---------- 檔案清單 ----------
@@ -619,7 +858,7 @@ public static class Core
 
     public static void UpdateRows(List<FileRow> rows, Settings c)
     {
-        var map = ParseWorkMap(c.WorkMap);
+        var map = BuildMap(c);
         foreach (var r in rows)
         {
             if (r.Manual) continue;
