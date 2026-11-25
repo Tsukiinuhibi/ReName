@@ -147,6 +147,7 @@ public class Settings
     public List<Category> Categories = new List<Category>();
     public List<NameFormat> Formats = new List<NameFormat>();
     public List<NameList> Lists = new List<NameList>();
+    public List<string> Layout = new List<string>();     // 介面上拖拉過的大小，例如 "map=0.32"
     public string ThemeMode = "system";        // system / light / dark
     public string Accent = "暖陽橘";            // 預設配色名稱，或 "custom"
     public string CustomAccent = "";            // #RRGGBB

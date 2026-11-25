@@ -174,6 +174,13 @@ public class Card : Panel
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         Padding = new Padding(G.P(16), G.P(12), G.P(16), G.P(12));
         Margin = new Padding(G.P(6));
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+    }
+    // 自動高度的卡片：裡面的內容靠上排，卡片只長到剛好的高度（避免 Windows 上越撐越高）
+    protected override void OnControlAdded(ControlEventArgs e)
+    {
+        base.OnControlAdded(e);
+        if (AutoSize && e.Control.Dock == DockStyle.Fill) e.Control.Dock = DockStyle.Top;
     }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -189,6 +196,115 @@ public class Card : Panel
                 using (var b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, 0, 0, G.P(4), Height);
                 g.ResetClip();
             }
+    }
+}
+
+// ---------- 自己做的捲動區（不用系統的 AutoScroll，切換分頁、縮放視窗時不會出錯） ----------
+public class ScrollHost : Panel
+{
+    public readonly Control Content;
+    readonly VScrollBar vs = new VScrollBar();
+    bool busy;
+
+    public ScrollHost(Control content)
+    {
+        Content = content;
+        Dock = DockStyle.Fill;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        content.Dock = DockStyle.None; content.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        content.Location = Point.Empty;
+        Controls.Add(content);
+        vs.Visible = false; Controls.Add(vs); vs.BringToFront();
+        vs.ValueChanged += (s, e) => { if (!busy) Content.Top = -vs.Value; };
+        content.SizeChanged += (s, e) => Relayout();
+        HookWheel(content);
+    }
+    void HookWheel(Control c)
+    {
+        c.MouseWheel += OnChildWheel;
+        foreach (Control ch in c.Controls) HookWheel(ch);
+        c.ControlAdded += (s, e) => HookWheel(e.Control);
+    }
+    void OnChildWheel(object s, MouseEventArgs e)
+    {
+        if (s is ComboBox || (s is TextBoxBase && ((TextBoxBase)s).Multiline)) return;
+        ScrollBy(-Math.Sign(e.Delta) * G.P(60));
+    }
+    protected override void OnMouseWheel(MouseEventArgs e) { ScrollBy(-Math.Sign(e.Delta) * G.P(60)); }
+    void ScrollBy(int dy)
+    {
+        if (!vs.Visible) return;
+        int max = Math.Max(0, vs.Maximum - vs.LargeChange + 1);
+        vs.Value = Math.Max(0, Math.Min(max, vs.Value + dy));
+    }
+    protected override void OnResize(EventArgs e) { base.OnResize(e); Relayout(); }
+    public void Relayout()
+    {
+        if (busy || Width <= 0 || Height <= 0) return;
+        busy = true;
+        try
+        {
+            int sbw = SystemInformation.VerticalScrollBarWidth;
+            int w = Width;
+            Content.MinimumSize = new Size(w, 0); Content.MaximumSize = new Size(w, 0); Content.Width = w;
+            int h = Content.PreferredSize.Height;
+            if (h > Height)
+            {
+                w = Width - sbw;
+                Content.MinimumSize = new Size(w, 0); Content.MaximumSize = new Size(w, 0); Content.Width = w;
+                h = Content.PreferredSize.Height;
+            }
+            Content.Height = h;
+            bool need = h > Height;
+            vs.Visible = need;
+            if (need)
+            {
+                vs.SetBounds(Width - sbw, 0, sbw, Height);
+                vs.Minimum = 0; vs.Maximum = Math.Max(0, h - 1); vs.LargeChange = Math.Max(1, Height); vs.SmallChange = G.P(40);
+                int maxVal = Math.Max(0, h - Height);
+                if (vs.Value > maxVal) vs.Value = maxVal;
+                Content.Top = -vs.Value;
+                Theme.StyleScrollBars(this);
+            }
+            else { vs.Value = 0; Content.Top = 0; }
+        }
+        finally { busy = false; }
+    }
+}
+
+// ---------- 可以拖拉調整大小的分隔區 ----------
+public class Split : SplitContainer
+{
+    public string Key = "";
+    public bool Hover;
+    public Split(string key, Orientation o)
+    {
+        Key = key; Orientation = o; Dock = DockStyle.Fill;
+        SplitterWidth = G.P(10);
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
+        MouseEnter += (s, e) => { Hover = true; Invalidate(); };
+        MouseLeave += (s, e) => { Hover = false; Invalidate(); };
+        SplitterMoved += (s, e) => Invalidate();
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; G.HQ(g);
+        g.Clear(BackColor);
+        var r = SplitterRectangle;
+        var c = Hover ? Theme.Accent : Theme.Border;
+        using (var b = new SolidBrush(c))
+        {
+            if (Orientation == Orientation.Vertical)
+            {
+                float x = r.X + r.Width / 2f, y = r.Y + r.Height / 2f;
+                G.Fill(g, new RectangleF(x - G.P(2), y - G.P(20), G.P(4), G.P(40)), G.P(2), c);
+            }
+            else
+            {
+                float x = r.X + r.Width / 2f, y = r.Y + r.Height / 2f;
+                G.Fill(g, new RectangleF(x - G.P(20), y - G.P(2), G.P(40), G.P(4)), G.P(2), c);
+            }
+        }
     }
 }
 

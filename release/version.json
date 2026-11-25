@@ -1,6 +1,6 @@
 {
-  "version": "3.1.0",
+  "version": "3.2.0",
   "url": "https://forgejo.taiyopen.com/tsukiinuhibi/ReName/raw/branch/main/release/BatchRename.exe",
-  "sha256": "dd29c81f1e83ff272df9b8fed5a64b30ea549cf4e366ad7029a3c34483f960e3",
-  "notes": "名單可以自己新增、編輯、刪除；每個名單可選用途：公司／廠商、備註用語、要刪掉的字、自訂欄位（可在檔名格式用〔名單名稱〕帶入）"
+  "sha256": "1334ef698eb4a5248ab2a7cd16aa25ad54d9d471ad8ee6f59f399cefad2594df",
+  "notes": "版面可以自己拖拉調整大小並記住；拖曳檔案到視窗任何地方都能加入；修正切換分頁時版面破碎、檔案清單被擠小、「改」欄太寬"
 }

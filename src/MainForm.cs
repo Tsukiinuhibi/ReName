@@ -30,6 +30,7 @@ public class MainForm : Form
     InputBox tbTest; FlowLayoutPanel testParts; TLabel lblTestResult;
 
     // 改名頁
+    Card gridCard;
     DataGridView grid; Chip chipTotal, chipReady, chipBad; FlatBtn btnRun, btnUndo; TLabel lblEmpty;
     // 範例學習頁
     InputBox tbFrom, tbTo; TLabel lblLearn; DataGridView learnGrid, rulesGrid; Chip chipRules;
@@ -38,7 +39,7 @@ public class MainForm : Form
     // 名單頁
     NiceList listList; DataGridView wordGrid; TLabel lblListName, lblListNote, lblListHint; Chip chipListKind;
     // 檔名格式頁
-    NiceList fmtList; Panel fmtEditor; InputBox tbFmtTpl; FlowLayoutPanel fmtCats, fmtDateFlow, fmtCustomDates, fmtPreview;
+    NiceList fmtList; ScrollHost fmtEditor; InputBox tbFmtTpl; FlowLayoutPanel fmtCats, fmtDateFlow, fmtCustomDates, fmtPreview;
     TLabel lblFmtTitle, lblFmtCatsHint; TCheck cbFmtMonth; InputBox[] fmtDateBoxes; bool fmtLoading;
     // 外觀頁
     FlowLayoutPanel modeTiles, colorTiles; TLabel lblAboutVer;
@@ -53,7 +54,7 @@ public class MainForm : Form
         Font = UI.BaseFont;
         Text = "批量改名工具 v" + Updater.CurrentText;
         Size = new Size(G.P(1240), G.P(860));
-        MinimumSize = new Size(G.P(980), G.P(660));
+        MinimumSize = new Size(G.P(860), G.P(560));
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true; KeyPreview = true;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -66,13 +67,16 @@ public class MainForm : Form
         loading = true;
         BuildUI();
         loading = false;
+        EnableDrop(this);
+        foreach (var p in pages) EnableDrop(p);
         UI.Apply(this);
         ApplyFonts(this);
 
         if (args != null && args.Length > 0) AddFiles(args);
         RefreshAll();
         HandleCreated += (s, e) => Theme.StyleTitleBar(this);
-        Shown += (s, e) => { Theme.StyleTitleBar(this); UI.Apply(this); grid.ClearSelection(); CheckUpdate(false); };
+        Shown += (s, e) => { Theme.StyleTitleBar(this); UI.Apply(this); RestoreSplits(); grid.ClearSelection(); CheckUpdate(false); };
+        ResizeEnd += (s, e) => Invalidate(true);
         FormClosing += (s, e) => { try { SaveSettings(cfg); } catch { } };
         KeyDown += (s, e) => {
             if (e.Control && e.KeyCode == Keys.Z && !(ActiveControl is TextBoxBase) && !(ActiveControl is InputBox) && btnUndo.Enabled)
@@ -128,7 +132,69 @@ public class MainForm : Form
     }
     static DataGridViewTextBoxColumn TextCol(string name, string header, float weight, bool ro = true)
     {
-        return new DataGridViewTextBoxColumn { Name = name, HeaderText = header, FillWeight = weight, ReadOnly = ro, SortMode = DataGridViewColumnSortMode.NotSortable };
+        var c = new DataGridViewTextBoxColumn { Name = name, HeaderText = header, ReadOnly = ro, SortMode = DataGridViewColumnSortMode.NotSortable, MinimumWidth = G.P(70) };
+        c.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill; c.FillWeight = weight;
+        return c;
+    }
+    // 勾選欄：固定寬度，不跟著視窗變寬
+    static DataGridViewCheckBoxColumn CheckCol(string name, string header, int width = 54)
+    {
+        var c = new DataGridViewCheckBoxColumn { Name = name, HeaderText = header, Resizable = DataGridViewTriState.False };
+        c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = G.P(width);
+        return c;
+    }
+
+    // 可以拖拉的分隔區；拉過的位置會記住
+    readonly List<Split> splits = new List<Split>();
+    readonly Dictionary<Split, double> splitDefaults = new Dictionary<Split, double>();
+    bool splitsReady;
+    Split NewSplit(string key, Orientation o, double defaultRatio)
+    {
+        var sp = new Split(key, o) { Panel1MinSize = G.P(o == Orientation.Vertical ? 220 : 120), Panel2MinSize = G.P(o == Orientation.Vertical ? 300 : 140) };
+        splits.Add(sp); splitDefaults[sp] = defaultRatio;
+        sp.SplitterMoved += (s, e) => { if (splitsReady) SaveSplit(sp); };
+        return sp;
+    }
+    static double LayoutValue(Settings c, string key)
+    {
+        foreach (var it in c.Layout ?? new List<string>())
+        {
+            int i = it.IndexOf('='); double v;
+            if (i > 0 && it.Substring(0, i) == key && double.TryParse(it.Substring(i + 1), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v)) return v;
+        }
+        return double.NaN;
+    }
+    void SetLayoutValue(string key, double v)
+    {
+        if (cfg.Layout == null) cfg.Layout = new List<string>();
+        cfg.Layout.RemoveAll(x => x.StartsWith(key + "="));
+        cfg.Layout.Add(key + "=" + v.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+        saveTimer.Stop(); saveTimer.Start();
+    }
+    void SaveSplit(Split sp)
+    {
+        if (sp.Key == "main") SetLayoutValue("main", sp.Height - sp.SplitterDistance);           // 記住下方「試試看」的高度
+        else { int total = sp.Orientation == Orientation.Vertical ? sp.Width : sp.Height; if (total > 0) SetLayoutValue(sp.Key, sp.SplitterDistance / (double)total); }
+    }
+    readonly HashSet<Split> restoredSplits = new HashSet<Split>();
+    void RestoreSplits()
+    {
+        foreach (var sp in splits)
+        {
+            if (restoredSplits.Contains(sp) || sp.FindForm() == null) continue;
+            int total = sp.Orientation == Orientation.Vertical ? sp.Width : sp.Height;
+            if (total <= sp.Panel1MinSize + sp.Panel2MinSize + sp.SplitterWidth) continue;
+            double v = LayoutValue(cfg, sp.Key);
+            int d;
+            if (sp.Key == "main") d = total - (int)(double.IsNaN(v) ? splitDefaults[sp] : v);
+            else d = (int)(total * (double.IsNaN(v) ? splitDefaults[sp] : v));
+            d = Math.Max(sp.Panel1MinSize, Math.Min(total - sp.Panel2MinSize - sp.SplitterWidth, d));
+            bool was = splitsReady; splitsReady = false;
+            try { sp.SplitterDistance = d; } catch { }
+            splitsReady = was;
+            restoredSplits.Add(sp);
+        }
+        splitsReady = true;
     }
     void ApplyFonts(Control c)
     {
@@ -137,10 +203,49 @@ public class MainForm : Form
     }
     void Tip(Control c, string text) { new ToolTip().SetToolTip(c, text); }
 
+    // ================= 拖曳檔案：整個視窗哪裡都可以放 =================
+    readonly HashSet<Control> dropReady = new HashSet<Control>();
+    void EnableDrop(Control c)
+    {
+        if (!dropReady.Add(c)) return;
+        c.AllowDrop = true;
+        c.DragEnter += OnDragOver; c.DragOver += OnDragOver;
+        c.DragLeave += (s, e) => DropHighlight(false);
+        c.DragDrop += OnDrop;
+        foreach (Control ch in c.Controls) EnableDrop(ch);
+        c.ControlAdded += (s, e) => EnableDrop(e.Control);
+    }
+    void OnDragOver(object s, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effect = DragDropEffects.Copy; DropHighlight(true); }
+        else e.Effect = DragDropEffects.None;
+    }
+    void OnDrop(object s, DragEventArgs e)
+    {
+        DropHighlight(false);
+        var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+        if (files == null || files.Length == 0) return;
+        Safe(() => {
+            if (tabs.SelectedIndex != 0) tabs.SelectedIndex = 0;
+            AddFiles(files); RefreshAll();
+        });
+    }
+    bool dropOn;
+    void DropHighlight(bool on)
+    {
+        if (on == dropOn || gridCard == null) return;
+        dropOn = on;
+        gridCard.AccentStrip = on;
+        lblEmpty.Text = on ? "放開滑鼠，就會把檔案加入清單" : "把檔案或資料夾拖曳到這裡（拖到視窗任何地方都可以），或按上方「＋ 加入檔案」";
+        lblEmpty.Visible = on || rows.Count == 0;
+        if (on) lblEmpty.BringToFront();
+        gridCard.Invalidate(true);
+    }
+
     // ================= 整體版面 =================
     void BuildUI()
     {
-        var root = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
+        var root = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent);
         Controls.Add(root);
 
         // 頂部：標題、分頁、主題切換
@@ -164,17 +269,44 @@ public class MainForm : Form
         root.Controls.Add(BuildUpdateBar(), 0, 1);
 
         var host = new Panel { Dock = DockStyle.Fill, Padding = new Padding(G.P(10), G.P(8), G.P(10), 0), Margin = new Padding(0) };
+        host.Resize += (s, e) => host.Invalidate(true);
         pages.Add(BuildRenamePage()); pages.Add(BuildLearnPage()); pages.Add(BuildMapPage());
         pages.Add(BuildListsPage()); pages.Add(BuildFormatPage()); pages.Add(BuildLookPage());
-        foreach (var p in pages) { p.Dock = DockStyle.Fill; p.Visible = false; host.Controls.Add(p); }
-        pages[0].Visible = true;
-        tabs.SelectedIndexChanged += (s, e) => {
-            for (int i = 0; i < pages.Count; i++) pages[i].Visible = i == tabs.SelectedIndex;
-            if (tabs.SelectedIndex == 4) ShowFormat();
-            Safe(RefreshAll);
-        };
-        root.Controls.Add(host, 0, 2);
-        root.Controls.Add(BuildTestPanel(), 0, 3);
+        foreach (var p in pages) p.Dock = DockStyle.Fill;
+        pageHost = host;
+        host.Controls.Add(pages[0]);
+        tabs.SelectedIndexChanged += (s, e) => Safe(() => ShowPage(tabs.SelectedIndex));
+        var mainSplit = NewSplit("main", Orientation.Horizontal, G.P(150));
+        mainSplit.FixedPanel = FixedPanel.Panel2;          // 拉大視窗時，多出來的空間給上面的內容
+        mainSplit.Panel1MinSize = G.P(260); mainSplit.Panel2MinSize = G.P(70);
+        mainSplit.Panel1.Controls.Add(host);
+        mainSplit.Panel2.Controls.Add(BuildTestPanel());
+        root.Controls.Add(mainSplit, 0, 2);
+    }
+
+    // 切換分頁：只把正在看的那一頁放在畫面上，切過去時再依目前的視窗大小重新排版
+    // （隱藏的頁面不會在背景重算版面，避免切回來時版面破碎）
+    Panel pageHost;
+    void ShowPage(int i)
+    {
+        if (i < 0 || i >= pages.Count) return;
+        var page = pages[i];
+        if (pageHost.Controls.Count == 1 && pageHost.Controls[0] == page) return;
+        pageHost.SuspendLayout();
+        try
+        {
+            pageHost.Controls.Clear();
+            pageHost.Controls.Add(page);
+            UI.Apply(page); ApplyFonts(page);
+        }
+        finally { pageHost.ResumeLayout(true); }
+        page.PerformLayout();
+        RestoreSplits();
+        if (i == 4) ShowFormat();
+        if (i == 3) ShowList();
+        if (i == 2) ShowCategory();
+        RefreshAll();
+        page.Invalidate(true);
     }
 
     // ---------- 更新提示列 ----------
@@ -195,9 +327,9 @@ public class MainForm : Form
     // ---------- 下方「試試看」 ----------
     Control BuildTestPanel()
     {
-        var wrap = new Panel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(G.P(10), G.P(4), G.P(10), G.P(10)), Margin = new Padding(0) };
-        var card = new Card { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(G.P(16), G.P(10), G.P(16), G.P(10)) };
-        var t = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0) };
+        var wrap = new Panel { Dock = DockStyle.Fill, Padding = new Padding(G.P(10), 0, G.P(10), G.P(10)), Margin = new Padding(0) };
+        var card = new Card { Dock = DockStyle.Fill, Padding = new Padding(G.P(16), G.P(10), G.P(8), G.P(10)) };
+        var t = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = new Padding(0), Padding = new Padding(0, 0, G.P(8), 0) };
         t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         tbTest = new InputBox("115.09月高空工作車(日)檢查表(甲公司)") { Placeholder = "輸入任何檔名，或在「改名」頁點一下某個檔案" };
@@ -207,7 +339,7 @@ public class MainForm : Form
         t.Controls.Add(new TLabel("試試看", LabelRole.Dim) { Margin = new Padding(0, G.P(10), G.P(10), 0) }, 0, 0); t.Controls.Add(tbTest, 1, 0);
         t.Controls.Add(new TLabel("辨識出", LabelRole.Dim) { Margin = new Padding(0, G.P(9), G.P(10), 0) }, 0, 1); t.Controls.Add(testParts, 1, 1);
         t.Controls.Add(new TLabel("新檔名", LabelRole.Dim) { Margin = new Padding(0, G.P(6), G.P(10), 0) }, 0, 2); t.Controls.Add(lblTestResult, 1, 2);
-        card.Controls.Add(t); wrap.Controls.Add(card);
+        card.Controls.Add(new ScrollHost(t)); wrap.Controls.Add(card);
         tbTest.Box.TextChanged += (s, e) => Safe(UpdateTest);
         return wrap;
     }
@@ -258,15 +390,14 @@ public class MainForm : Form
         top.Controls.Add(topRows);
         page.Controls.Add(top, 0, 0);
 
-        var gridCard = new Card { Dock = DockStyle.Fill, Padding = new Padding(G.P(8), G.P(6), G.P(8), G.P(8)) };
+        gridCard = new Card { Dock = DockStyle.Fill, Padding = new Padding(G.P(8), G.P(6), G.P(8), G.P(8)) };
         grid = NewGrid(true); grid.AllowDrop = true;
-        grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Apply", HeaderText = "改", FillWeight = 5 });
+        grid.Columns.Add(CheckCol("Apply", "改"));
         grid.Columns.Add(TextCol("Old", "原檔名", 37));
         grid.Columns.Add(TextCol("New", "新檔名（點兩下可直接修改）", 37, false));
         grid.Columns.Add(TextCol("Status", "狀態", 21));
-        lblEmpty = new TLabel("把檔案或資料夾拖曳到這裡，或按上方「＋ 加入檔案」", LabelRole.Dim) { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
+        lblEmpty = new TLabel("把檔案或資料夾拖曳到這裡（拖到視窗任何地方都可以），或按上方「＋ 加入檔案」", LabelRole.Dim) { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
         gridCard.Controls.Add(grid); gridCard.Controls.Add(lblEmpty); lblEmpty.BringToFront();
-        lblEmpty.AllowDrop = true;
         page.Controls.Add(gridCard, 0, 1);
 
         var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(G.P(6), G.P(2), G.P(6), 0) };
@@ -305,9 +436,6 @@ public class MainForm : Form
         bOld.Click += (s, e) => Safe(RunUndoFromFile);
         bLog.Click += (s, e) => Safe(() => { Directory.CreateDirectory(LogDir); System.Diagnostics.Process.Start("explorer.exe", "\"" + LogDir + "\""); });
 
-        DragEventHandler enter = (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
-        DragEventHandler drop = (s, e) => Safe(() => { AddFiles((string[])e.Data.GetData(DataFormats.FileDrop)); RefreshAll(); });
-        foreach (Control c in new Control[] { grid, lblEmpty, this }) { c.DragEnter += enter; c.DragDrop += drop; }
 
         grid.CurrentCellDirtyStateChanged += (s, e) => {
             if (grid.IsCurrentCellDirty && grid.CurrentCell is DataGridViewCheckBoxCell) grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
@@ -339,10 +467,12 @@ public class MainForm : Form
     Control BuildLearnPage()
     {
         bool legacy = cfg.Rules != null && cfg.Rules.Count > 0;
-        var page = legacy ? Rows(SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize) : Rows(SizeType.AutoSize, SizeType.Percent);
+        var page = NewSplit("learn", Orientation.Horizontal, 0.36);
+        var lower = legacy ? Rows(SizeType.Percent, SizeType.AutoSize) : Rows(SizeType.Percent);
+        page.Panel2.Controls.Add(lower);
 
-        var teach = new Card { Dock = DockStyle.Fill, AutoSize = true, AccentStrip = true };
-        var tr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); tr.AutoSize = true;
+        var teach = new Card { Dock = DockStyle.Fill, AccentStrip = true, Padding = new Padding(G.P(16), G.P(12), G.P(6), G.P(12)) };
+        var tr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); tr.AutoSize = true; tr.AutoSizeMode = AutoSizeMode.GrowAndShrink; tr.Padding = new Padding(0, 0, G.P(10), 0);
         tr.Controls.Add(L("教程式一個新的改法", LabelRole.Title), 0, 0);
         tr.Controls.Add(new TLabel("遇到改得不對的檔名，輸入「原檔名」和「想要的結果」，按「學起來」。程式會自己找出規律，以後同一種文件都照這樣改。\r\n" +
                                    "如果和以前學過的規則重複或衝突，程式會先問你，不會直接蓋掉。", LabelRole.Dim) { MaximumSize = new Size(G.P(1100), 0) }, 0, 1);
@@ -357,8 +487,8 @@ public class MainForm : Form
         tr.Controls.Add(inp, 0, 2);
         lblLearn = L(""); lblLearn.MaximumSize = new Size(G.P(1100), 0);
         tr.Controls.Add(lblLearn, 0, 3);
-        teach.Controls.Add(tr);
-        page.Controls.Add(teach, 0, 0);
+        teach.Controls.Add(new ScrollHost(tr));
+        page.Panel1.Controls.Add(teach);
 
         var list = new Card { Dock = DockStyle.Fill };
         var lr = Rows(SizeType.AutoSize, SizeType.Percent);
@@ -367,7 +497,7 @@ public class MainForm : Form
         lr.Controls.Add(CardHeader(new Control[] { L("已學會的規則", LabelRole.Title), chipRules, L("點兩下可以編輯，取消勾選＝暫停使用", LabelRole.Dim) }, new Control[] { bEdit, bDel }), 0, 0);
         learnGrid = NewGrid(true);
         learnGrid.MultiSelect = false;
-        learnGrid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "使用", FillWeight = 6 });
+        learnGrid.Columns.Add(CheckCol("Enabled", "使用"));
         learnGrid.Columns.Add(TextCol("Doc", "文件", 13));
         learnGrid.Columns.Add(TextCol("Case", "適用情況", 16));
         learnGrid.Columns.Add(TextCol("Tpl", "新檔名的樣子", 31));
@@ -375,7 +505,7 @@ public class MainForm : Form
         learnGrid.Columns.Add(TextCol("To", "範例：結果", 17));
         lr.Controls.Add(learnGrid, 0, 1);
         list.Controls.Add(lr);
-        page.Controls.Add(list, 0, 1);
+        lower.Controls.Add(list, 0, 0);
         FillLearnGrid();
 
         if (legacy)
@@ -384,13 +514,13 @@ public class MainForm : Form
             var or = Rows(SizeType.AutoSize, SizeType.AutoSize); or.AutoSize = true;
             or.Controls.Add(L("舊版「尋找→取代」規則（之前設定的，仍然有效；全部刪掉後下次開啟就不再顯示）", LabelRole.Dim), 0, 0);
             rulesGrid = NewGrid(true); rulesGrid.AllowUserToAddRows = true; rulesGrid.AllowUserToDeleteRows = true; rulesGrid.Dock = DockStyle.Top; rulesGrid.Height = G.P(150);
-            rulesGrid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "啟用", FillWeight = 7 });
+            rulesGrid.Columns.Add(CheckCol("Enabled", "啟用"));
             var stageCol = new DataGridViewComboBoxColumn { Name = "Stage", HeaderText = "何時套用", FillWeight = 20, FlatStyle = FlatStyle.Flat };
             stageCol.Items.AddRange(Rule.StageBefore, Rule.StageAfter);
             rulesGrid.Columns.Add(stageCol);
             rulesGrid.Columns.Add(TextCol("Find", "尋找文字", 24, false));
             rulesGrid.Columns.Add(TextCol("Replace", "取代為", 24, false));
-            rulesGrid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Regex", HeaderText = "正規表示式", FillWeight = 9 });
+            rulesGrid.Columns.Add(CheckCol("Regex", "正規表示式", 96));
             rulesGrid.Columns.Add(TextCol("Note", "備註", 16, false));
             foreach (var rule in cfg.Rules)
                 rulesGrid.Rows.Add(rule.Enabled, rule.Stage == Rule.StageAfter ? Rule.StageAfter : Rule.StageBefore, rule.Find ?? "", rule.Replace ?? "", rule.UseRegex, rule.Note ?? "");
@@ -400,7 +530,7 @@ public class MainForm : Form
             rulesGrid.RowsRemoved += (s, e) => { if (!loading) { ReadLegacyRules(); Changed(); } };
             or.Controls.Add(rulesGrid, 0, 1);
             old.Controls.Add(or);
-            page.Controls.Add(old, 0, 2);
+            lower.Controls.Add(old, 0, 1);
         }
 
         bFill.Click += (s, e) => { tbFrom.Text = tbTest.Text.Trim(); tbTo.Box.Focus(); };
@@ -465,7 +595,7 @@ public class MainForm : Form
     // ================= 分頁 3：名稱對照（分類） =================
     Control BuildMapPage()
     {
-        var page = Cols(32, 68);
+        var page = NewSplit("map", Orientation.Vertical, 0.32);
 
         var left = new Card { Dock = DockStyle.Fill };
         var lr = Rows(SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
@@ -483,7 +613,7 @@ public class MainForm : Form
         lb.Controls.AddRange(new Control[] { bEditCat, bDelCat, bUp, bDown });
         lr.Controls.Add(lb, 0, 2);
         left.Controls.Add(lr);
-        page.Controls.Add(left, 0, 0);
+        page.Panel1.Controls.Add(left);
 
         var right = new Card { Dock = DockStyle.Fill, AccentStrip = true };
         var rr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
@@ -502,7 +632,7 @@ public class MainForm : Form
         rr.Controls.Add(itemGrid, 0, 3);
         rr.Controls.Add(new TLabel("辨識出的文件名稱和「原本的名稱」完全一樣時，就換成「改成」的寫法。項目也決定文件屬於哪個分類，「檔名格式」可以指定給分類。表格裡點兩下也能直接修改。", LabelRole.Dim) { MaximumSize = new Size(G.P(780), 0) }, 0, 4);
         right.Controls.Add(rr);
-        page.Controls.Add(right, 1, 0);
+        page.Panel2.Controls.Add(right);
 
         FillCatList(0);
         catList.SelectedIndexChanged += (s, e) => ShowCategory();
@@ -661,7 +791,7 @@ public class MainForm : Form
 
     Control BuildListsPage()
     {
-        var page = Cols(32, 68);
+        var page = NewSplit("lists", Orientation.Vertical, 0.32);
 
         var left = new Card { Dock = DockStyle.Fill };
         var lr = Rows(SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
@@ -679,7 +809,7 @@ public class MainForm : Form
         lb.Controls.AddRange(new Control[] { bEditList, bDelList, bUp, bDown });
         lr.Controls.Add(lb, 0, 2);
         left.Controls.Add(lr);
-        page.Controls.Add(left, 0, 0);
+        page.Panel1.Controls.Add(left);
 
         var right = new Card { Dock = DockStyle.Fill, AccentStrip = true };
         var rr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent);
@@ -698,7 +828,7 @@ public class MainForm : Form
         wordGrid.Columns.Add(TextCol("Word", "內容（點兩下可以直接修改）", 100, false));
         rr.Controls.Add(wordGrid, 0, 4);
         right.Controls.Add(rr);
-        page.Controls.Add(right, 1, 0);
+        page.Panel2.Controls.Add(right);
 
         FillListList(0);
         listList.SelectedIndexChanged += (s, e) => ShowList();
@@ -881,7 +1011,7 @@ public class MainForm : Form
 
     Control BuildFormatPage()
     {
-        var page = Cols(30, 70);
+        var page = NewSplit("format", Orientation.Vertical, 0.3);
 
         var left = new Card { Dock = DockStyle.Fill };
         var lr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
@@ -902,11 +1032,10 @@ public class MainForm : Form
         lb.Controls.AddRange(new Control[] { bCopy, bRename, bDel });
         lr.Controls.Add(lb, 0, 3);
         left.Controls.Add(lr);
-        page.Controls.Add(left, 0, 0);
+        page.Panel1.Controls.Add(left);
 
         var right = new Card { Dock = DockStyle.Fill, AccentStrip = true, Padding = new Padding(G.P(18), G.P(12), G.P(8), G.P(12)) };
-        fmtEditor = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        var ed = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Padding = new Padding(0, 0, G.P(12), 0) };
+        var ed = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, Padding = new Padding(0, 0, G.P(12), 0) };
         ed.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         int r = 0;
         lblFmtTitle = L("", LabelRole.Title);
@@ -978,9 +1107,9 @@ public class MainForm : Form
         fmtPreview = Flow(); fmtPreview.FlowDirection = FlowDirection.TopDown; fmtPreview.WrapContents = false;
         ed.Controls.Add(fmtPreview, 0, r++);
 
-        fmtEditor.Controls.Add(ed);
+        fmtEditor = new ScrollHost(ed);
         right.Controls.Add(fmtEditor);
-        page.Controls.Add(right, 1, 0);
+        page.Panel2.Controls.Add(right);
 
         FillFmtList(0);
         fmtList.SelectedIndexChanged += (s, e) => ShowFormat();
@@ -1161,8 +1290,7 @@ public class MainForm : Form
     // ================= 分頁 6：外觀 =================
     Control BuildLookPage()
     {
-        var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        var stack = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
+        var stack = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1 };
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         var mode = new Card { Dock = DockStyle.Top, AutoSize = true };
@@ -1204,7 +1332,7 @@ public class MainForm : Form
         stack.Controls.Add(about, 0, 2);
         bCheck.Click += (s, e) => CheckUpdate(true);
 
-        page.Controls.Add(stack);
+        var page = new ScrollHost(stack);
         BuildLookTiles();
         return page;
     }
@@ -1245,6 +1373,7 @@ public class MainForm : Form
         BuildLookTiles();
         UI.Apply(this);
         ApplyFonts(this);
+        foreach (var p in pages) if (p.Parent == null) { UI.Apply(p); }
         ResumeLayout();
         FillGrid(); FillLearnGrid(); ShowCategory(); UpdateTest();
         Theme.StyleTitleBar(this);
@@ -1338,7 +1467,7 @@ public class MainForm : Form
         Core.UpdateRows(rows, cfg);
         FillGrid();
         UpdateTest();
-        if (tabs.SelectedIndex == 4) { fmtList.Invalidate(); UpdateFormatPreview(); }
+        if (tabs.SelectedIndex == 4 && fmtList.FindForm() != null) { fmtList.Invalidate(); UpdateFormatPreview(); }
         if (tabs.SelectedIndex == 2) catList.Invalidate();
         if (tabs.SelectedIndex == 3) { listList.Invalidate(); ShowList(); }
     }
