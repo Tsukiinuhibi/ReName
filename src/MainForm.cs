@@ -72,6 +72,11 @@ public class MainForm : Form
         UI.Apply(this);
         ApplyFonts(this);
 
+        Perf.Context = () => {
+            int n = 0; var st = new Stack<Control>(); st.Push(this);
+            while (st.Count > 0) { var c = st.Pop(); n++; foreach (Control ch in c.Controls) st.Push(ch); }
+            return "檔案 " + rows.Count + " 個、畫面元件 " + n + " 個、縮放 " + (int)(G.S * 100) + "%、視窗 " + Width + "×" + Height + "、" + Environment.OSVersion;
+        };
         if (args != null && args.Length > 0) AddFiles(args);
         RefreshAll();
         HandleCreated += (s, e) => Theme.StyleTitleBar(this);
@@ -148,6 +153,16 @@ public class MainForm : Form
     readonly List<Split> splits = new List<Split>();
     readonly Dictionary<Split, double> splitDefaults = new Dictionary<Split, double>();
     bool splitsReady;
+    readonly Dictionary<Split, Func<int>> topPx = new Dictionary<Split, Func<int>>();
+    // 上下分隔、上面區塊記住自己的高度（像素）；拉大視窗時多的空間給下面
+    Split NewTopSplit(string key, Func<int> defaultHeight)
+    {
+        var sp = NewSplit(key, Orientation.Horizontal, 0);
+        sp.FixedPanel = FixedPanel.Panel1;
+        sp.SetMins(G.P(50), G.P(110));
+        topPx[sp] = defaultHeight;
+        return sp;
+    }
     Split NewSplit(string key, Orientation o, double defaultRatio)
     {
         var sp = new Split(key, o);
@@ -174,7 +189,8 @@ public class MainForm : Form
     }
     void SaveSplit(Split sp)
     {
-        if (sp.Key == "main") SetLayoutValue("main", sp.Height - sp.SplitterDistance);           // 記住下方「試試看」的高度
+        if (topPx.ContainsKey(sp)) SetLayoutValue(sp.Key, sp.SplitterDistance);
+        else if (sp.Key == "main") SetLayoutValue("main", sp.Height - sp.SplitterDistance);           // 記住下方「試試看」的高度
         else { int total = sp.Orientation == Orientation.Vertical ? sp.Width : sp.Height; if (total > 0) SetLayoutValue(sp.Key, sp.SplitterDistance / (double)total); }
     }
     readonly HashSet<Split> restoredSplits = new HashSet<Split>();
@@ -182,12 +198,13 @@ public class MainForm : Form
     {
         foreach (var sp in splits)
         {
-            if (restoredSplits.Contains(sp) || sp.FindForm() == null) continue;
+            if (restoredSplits.Contains(sp) || sp.FindForm() == null || !sp.Visible) continue;
             int total = sp.Orientation == Orientation.Vertical ? sp.Width : sp.Height;
             if (total <= sp.Min1 + sp.Min2 + sp.SplitterWidth) continue;
             double v = LayoutValue(cfg, sp.Key);
             int d;
-            if (sp.Key == "main") d = total - (int)(double.IsNaN(v) ? splitDefaults[sp] : v);
+            if (topPx.ContainsKey(sp)) { int def = 0; try { def = topPx[sp](); } catch { } d = double.IsNaN(v) ? (def > 0 ? def : total / 3) : (int)v; }
+            else if (sp.Key == "main") d = total - (int)(double.IsNaN(v) ? splitDefaults[sp] : v);
             else d = (int)(total * (double.IsNaN(v) ? splitDefaults[sp] : v));
             d = Math.Max(sp.Min1, Math.Min(total - sp.Min2 - sp.SplitterWidth, d));
             bool was = splitsReady; splitsReady = false;
@@ -279,9 +296,8 @@ public class MainForm : Form
         host.Resize += (s, e) => host.Invalidate(true);
         pages.Add(BuildRenamePage()); pages.Add(BuildLearnPage()); pages.Add(BuildMapPage());
         pages.Add(BuildListsPage()); pages.Add(BuildFormatPage()); pages.Add(BuildLookPage());
-        foreach (var p in pages) p.Dock = DockStyle.Fill;
-        pageHost = host;
-        host.Controls.Add(pages[0]);
+        foreach (var p in pages) { p.Dock = DockStyle.Fill; p.Visible = p == pages[0]; host.Controls.Add(p); }
+        pageHost = host; currentPage = 0;
         tabs.SelectedIndexChanged += (s, e) => Safe(() => ShowPage(tabs.SelectedIndex));
         var mainSplit = NewSplit("main", Orientation.Horizontal, G.P(150));
         mainSplit.FixedPanel = FixedPanel.Panel2;          // 拉大視窗時，多出來的空間給上面的內容
@@ -301,35 +317,32 @@ public class MainForm : Form
         if (Environment.OSVersion.Platform != PlatformID.Win32NT || !c.IsHandleCreated) return;
         try { SendMessage(c.Handle, 0x000B, (IntPtr)(on ? 1 : 0), IntPtr.Zero); } catch { }   // WM_SETREDRAW：換頁時先停止重畫，換好再一次畫出來
     }
+    int currentPage;
     void ShowPage(int i)
     {
-        if (i < 0 || i >= pages.Count) return;
+        if (i < 0 || i >= pages.Count || i == currentPage) return;
         var page = pages[i];
-        if (pageHost.Controls.Count == 1 && pageHost.Controls[0] == page) return;
-        Redraw(pageHost, false);
-        try
+        using (Perf.Begin("切換到「" + tabs.Items[i] + "」"))
         {
-            pageHost.SuspendLayout();
+            Redraw(pageHost, false);
             try
             {
-                pageHost.Controls.Clear();
-                pageHost.Controls.Add(page);
+                // 所有分頁一直放在畫面裡，只是切換顯示：不用重新排版整頁（Windows 上重新排版很慢）
+                page.Visible = true; page.BringToFront();
+                for (int k = 0; k < pages.Count; k++) if (k != i) pages[k].Visible = false;
+                currentPage = i;
+                Perf.Mark("顯示");
                 int g;
-                if (!pageGen.TryGetValue(page, out g) || g != Theme.Gen)   // 只有換過配色才需要重新上色
-                {
-                    UI.Apply(page); ApplyFonts(page);
-                    pageGen[page] = Theme.Gen;
-                }
+                if (!pageGen.TryGetValue(page, out g) || g != Theme.Gen) { UI.Apply(page); pageGen[page] = Theme.Gen; Perf.Mark("上色"); }
+                RestoreSplits();
+                if (i == 4) ShowFormat();
+                if (i == 3) ShowList();
+                if (i == 2) ShowCategory();
+                if (i == 0 && rowsStale) RefreshAll();
+                Perf.Mark("內容");
             }
-            finally { pageHost.ResumeLayout(true); }
-            RestoreSplits();
-            // 只更新這一頁自己的內容；檔案清單只有在設定變過時才重算
-            if (i == 4) ShowFormat();
-            if (i == 3) ShowList();
-            if (i == 2) ShowCategory();
-            if (i == 0 && rowsStale) RefreshAll();
+            finally { Redraw(pageHost, true); pageHost.Invalidate(true); }
         }
-        finally { Redraw(pageHost, true); pageHost.Invalidate(true); }
     }
 
     // ---------- 更新提示列 ----------
@@ -391,9 +404,9 @@ public class MainForm : Form
     // ================= 分頁 1：改名 =================
     Control BuildRenamePage()
     {
-        var page = Rows(SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
+        var page = Rows(SizeType.Percent, SizeType.AutoSize);
 
-        var top = new Card { Dock = DockStyle.Fill, AutoSize = true };
+        var top = new Card { Dock = DockStyle.Fill };
         var topRows = Rows(SizeType.AutoSize, SizeType.AutoSize); topRows.AutoSize = true;
         chipTotal = new Chip("共 0 個"); chipReady = new Chip("將改名 0 個", ChipKind.Success); chipBad = new Chip("有問題 0 個", ChipKind.Danger);
         var bAdd = B("＋ 加入檔案", BtnKind.Primary); var bDir = B("加入資料夾", BtnKind.Outline);
@@ -410,18 +423,22 @@ public class MainForm : Form
         Tip(btnUndo, "復原剛才的「執行改名」（Ctrl+Z）");
         bar.Controls.Add(left, 0, 0); bar.Controls.Add(btnUndo, 1, 0);
         topRows.Controls.Add(bar, 0, 1);
-        top.Controls.Add(topRows);
-        page.Controls.Add(top, 0, 0);
+        var topHost = new ScrollHost(topRows);
+        top.Controls.Add(topHost);
+        var renameSplit = NewTopSplit("renameTop", () => topRows.GetPreferredSize(new Size(Math.Max(G.P(200), top.Width - top.Padding.Horizontal), 0)).Height + top.Padding.Vertical + G.P(4));
+        renameSplit.Panel1.Controls.Add(top);
+        page.Controls.Add(renameSplit, 0, 0);
 
         gridCard = new Card { Dock = DockStyle.Fill, Padding = new Padding(G.P(8), G.P(6), G.P(8), G.P(8)) };
         grid = NewGrid(true); grid.AllowDrop = true;
+        grid.CellFormatting += GridCellColors;
         grid.Columns.Add(CheckCol("Apply", "改"));
         grid.Columns.Add(TextCol("Old", "原檔名", 37));
         grid.Columns.Add(TextCol("New", "新檔名（點兩下可直接修改）", 37, false));
         grid.Columns.Add(TextCol("Status", "狀態", 21));
         lblEmpty = new TLabel("把檔案或資料夾拖曳到這裡（拖到視窗任何地方都可以），或按上方「＋ 加入檔案」", LabelRole.Dim) { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
         gridCard.Controls.Add(grid); gridCard.Controls.Add(lblEmpty); lblEmpty.BringToFront();
-        page.Controls.Add(gridCard, 0, 1);
+        renameSplit.Panel2.Controls.Add(gridCard);
 
         var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(G.P(6), G.P(2), G.P(6), 0) };
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -431,7 +448,7 @@ public class MainForm : Form
         btnRun = B("執行改名  →", BtnKind.Primary);
         btnRun.Font = new Font(UI.BaseFont.FontFamily, 11f, FontStyle.Bold);
         bottom.Controls.Add(bl, 0, 0); bottom.Controls.Add(btnRun, 1, 0);
-        page.Controls.Add(bottom, 0, 2);
+        page.Controls.Add(bottom, 0, 1);
 
         // 事件
         bAdd.Click += (s, e) => {
@@ -490,9 +507,10 @@ public class MainForm : Form
     Control BuildLearnPage()
     {
         bool legacy = cfg.Rules != null && cfg.Rules.Count > 0;
-        var page = NewSplit("learn", Orientation.Horizontal, 0.36);
-        var lower = legacy ? Rows(SizeType.Percent, SizeType.AutoSize) : Rows(SizeType.Percent);
-        page.Panel2.Controls.Add(lower);
+        TableLayoutPanel trRef = null; Card teachRef = null;
+        var page = NewTopSplit("learnTop", () => trRef.GetPreferredSize(new Size(Math.Max(G.P(200), teachRef.Width - teachRef.Padding.Horizontal - G.P(20)), 0)).Height + teachRef.Padding.Vertical + G.P(6));
+        Split lowerSplit = legacy ? NewSplit("learnRules", Orientation.Horizontal, 0.62) : null;
+        if (lowerSplit != null) page.Panel2.Controls.Add(lowerSplit);
 
         var teach = new Card { Dock = DockStyle.Fill, AccentStrip = true, Padding = new Padding(G.P(16), G.P(12), G.P(6), G.P(12)) };
         var tr = Rows(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize); tr.AutoSize = true; tr.AutoSizeMode = AutoSizeMode.GrowAndShrink; tr.Padding = new Padding(0, 0, G.P(10), 0);
@@ -512,6 +530,7 @@ public class MainForm : Form
         tr.Controls.Add(lblLearn, 0, 3);
         teach.Controls.Add(new ScrollHost(tr));
         page.Panel1.Controls.Add(teach);
+        trRef = tr; teachRef = teach;
 
         var list = new Card { Dock = DockStyle.Fill };
         var lr = Rows(SizeType.AutoSize, SizeType.Percent);
@@ -528,15 +547,15 @@ public class MainForm : Form
         learnGrid.Columns.Add(TextCol("To", "範例：結果", 17));
         lr.Controls.Add(learnGrid, 0, 1);
         list.Controls.Add(lr);
-        lower.Controls.Add(list, 0, 0);
+        if (lowerSplit != null) lowerSplit.Panel1.Controls.Add(list); else page.Panel2.Controls.Add(list);
         FillLearnGrid();
 
         if (legacy)
         {
-            var old = new Card { Dock = DockStyle.Fill, AutoSize = true };
-            var or = Rows(SizeType.AutoSize, SizeType.AutoSize); or.AutoSize = true;
+            var old = new Card { Dock = DockStyle.Fill };
+            var or = Rows(SizeType.AutoSize, SizeType.Percent);
             or.Controls.Add(L("舊版「尋找→取代」規則（之前設定的，仍然有效；全部刪掉後下次開啟就不再顯示）", LabelRole.Dim), 0, 0);
-            rulesGrid = NewGrid(true); rulesGrid.AllowUserToAddRows = true; rulesGrid.AllowUserToDeleteRows = true; rulesGrid.Dock = DockStyle.Top; rulesGrid.Height = G.P(150);
+            rulesGrid = NewGrid(true); rulesGrid.AllowUserToAddRows = true; rulesGrid.AllowUserToDeleteRows = true; rulesGrid.Dock = DockStyle.Fill;
             rulesGrid.Columns.Add(CheckCol("Enabled", "啟用"));
             var stageCol = new DataGridViewComboBoxColumn { Name = "Stage", HeaderText = "何時套用", FillWeight = 20, FlatStyle = FlatStyle.Flat };
             stageCol.Items.AddRange(Rule.StageBefore, Rule.StageAfter);
@@ -553,7 +572,7 @@ public class MainForm : Form
             rulesGrid.RowsRemoved += (s, e) => { if (!loading) { ReadLegacyRules(); Changed(); } };
             or.Controls.Add(rulesGrid, 0, 1);
             old.Controls.Add(or);
-            lower.Controls.Add(old, 0, 1);
+            lowerSplit.Panel2.Controls.Add(old);
         }
 
         bFill.Click += (s, e) => { tbFrom.Text = tbTest.Text.Trim(); tbTo.Box.Focus(); };
@@ -598,6 +617,11 @@ public class MainForm : Form
         cfg.Rules = list;
     }
 
+    void RecolorLearnGrid()
+    {
+        UI.StyleGrid(learnGrid);
+        foreach (DataGridViewRow r in learnGrid.Rows) { var l = r.Tag as Learned; r.DefaultCellStyle.ForeColor = l != null && !l.Enabled ? Theme.TextDim : Color.Empty; }
+    }
     void FillLearnGrid()
     {
         bool was = loading; loading = true;
@@ -1362,15 +1386,32 @@ public class MainForm : Form
         return page;
     }
 
+    readonly List<KeyValuePair<string, Tile>> modeTileList = new List<KeyValuePair<string, Tile>>(), colorTileList = new List<KeyValuePair<string, Tile>>();
+    Tile customTile;
+    void UpdateLookTiles()
+    {
+        if (customTile == null) { BuildLookTiles(); return; }
+        foreach (var kv in modeTileList)
+        {
+            kv.Value.Selected = cfg.ThemeMode == kv.Key;
+            if (kv.Key == "system") kv.Value.Sub = "目前：" + (Theme.SystemIsDark() ? "暗色" : "亮色");
+        }
+        foreach (var kv in colorTileList) kv.Value.Selected = cfg.Accent == kv.Key;
+        var custom = Theme.ParseHex(cfg.CustomAccent);
+        customTile.Swatch = custom ?? Color.FromArgb(200, 200, 200);
+        customTile.Sub = custom != null ? Theme.Hex(custom.Value) : "用色環挑選";
+        customTile.Selected = cfg.Accent == "custom";
+    }
     void BuildLookTiles()
     {
+        modeTileList.Clear(); colorTileList.Clear();
         modeTiles.Controls.Clear();
         foreach (var m in new[] { new[] { "system", "◐", "跟隨系統", "目前：" + (Theme.SystemIsDark() ? "暗色" : "亮色") }, new[] { "light", "☀", "亮色", "白色背景" }, new[] { "dark", "☾", "暗色", "深色背景" } })
         {
             var t = new Tile { Glyph = m[1], Title = m[2], Sub = m[3], Size = new Size(G.P(220), G.P(70)), Selected = cfg.ThemeMode == m[0], Font = Font };
             string id = m[0];
             t.Click += (s, e) => { cfg.ThemeMode = id; ApplyTheme(); };
-            modeTiles.Controls.Add(t);
+            modeTiles.Controls.Add(t); modeTileList.Add(new KeyValuePair<string, Tile>(id, t));
         }
         colorTiles.Controls.Clear();
         foreach (var p in Theme.Palettes)
@@ -1378,7 +1419,7 @@ public class MainForm : Form
             var t = new Tile { Swatch = p.Accent, Title = p.Name, Size = new Size(G.P(170), G.P(58)), Selected = cfg.Accent == p.Name, Font = Font };
             string name = p.Name;
             t.Click += (s, e) => { cfg.Accent = name; ApplyTheme(); };
-            colorTiles.Controls.Add(t);
+            colorTiles.Controls.Add(t); colorTileList.Add(new KeyValuePair<string, Tile>(name, t));
         }
         var custom = Theme.ParseHex(cfg.CustomAccent);
         var ct = new Tile { Swatch = custom ?? Color.FromArgb(200, 200, 200), Title = "自訂顏色…", Sub = custom != null ? Theme.Hex(custom.Value) : "用色環挑選", Size = new Size(G.P(200), G.P(58)), Selected = cfg.Accent == "custom", Font = Font };
@@ -1387,23 +1428,31 @@ public class MainForm : Form
             if (c == null) return;
             cfg.CustomAccent = Theme.Hex(c.Value); cfg.Accent = "custom"; ApplyTheme();
         };
-        colorTiles.Controls.Add(ct);
+        colorTiles.Controls.Add(ct); customTile = ct;
     }
 
     void ApplyTheme()
     {
-        Theme.Load(cfg);
-        btnThemeToggle.Text = Theme.Dark ? "☀" : "☾";
-        SuspendLayout();
-        BuildLookTiles();
-        UI.Apply(this);
-        ApplyFonts(this);
-        foreach (var p in pages) { if (p.Parent == null) UI.Apply(p); pageGen[p] = Theme.Gen; }
-        ResumeLayout();
-        FillGrid(); FillLearnGrid(); ShowCategory(); UpdateTest();
-        Theme.StyleTitleBar(this);
-        Invalidate(true);
-        Changed();
+        using (Perf.Begin("切換配色"))
+        {
+            Theme.Load(cfg);
+            btnThemeToggle.Text = Theme.Dark ? "☀" : "☾";
+            Cursor = Cursors.WaitCursor;
+            Redraw(this, false);   // 全部換好顏色再一次畫出來
+            try
+            {
+                UpdateLookTiles();
+                UI.Apply(this);
+                foreach (var p in pages) pageGen[p] = Theme.Gen;
+                Perf.Mark("上色");
+                RecolorLearnGrid(); ShowCategory(); UpdateTest();
+                Perf.Mark("表格");
+                Theme.StyleTitleBar(this);
+            }
+            finally { Redraw(this, true); Cursor = Cursors.Default; Invalidate(true); Update(); }
+            // 換配色不會影響檔名，所以不用重算檔案清單，只要存設定
+            saveTimer.Stop(); saveTimer.Start();
+        }
     }
 
     // ================= 設定 =================
@@ -1505,39 +1554,49 @@ public class MainForm : Form
 
     void FillGrid()
     {
-        filling = true;
-        int first = grid.FirstDisplayedScrollingRowIndex;
-        Redraw(grid, false);
-        try
+        using (Perf.Begin("更新檔案清單（" + rows.Count + " 個）"))
         {
-            grid.Rows.Clear();
-            var list = new DataGridViewRow[rows.Count];
-            for (int k = 0; k < rows.Count; k++)
+            filling = true;
+            int first = grid.FirstDisplayedScrollingRowIndex;
+            Redraw(grid, false);
+            try
             {
-                var r = rows[k];
-                var gr = new DataGridViewRow();
-                gr.CreateCells(grid, r.Ok && !r.Excluded, r.OldName, r.NewName, r.Status);
-                gr.Height = grid.RowTemplate.Height;
-                gr.Tag = r;
-                var st = gr.Cells[grid.Columns["Status"].Index].Style;
-                if (r.Ok)
+                grid.Rows.Clear();
+                var list = new DataGridViewRow[rows.Count];
+                for (int k = 0; k < rows.Count; k++)
                 {
-                    if (r.Manual) gr.DefaultCellStyle.BackColor = Theme.InfoSoft;
-                    st.ForeColor = r.Excluded ? Theme.TextDim : Theme.Success;
+                    var r = rows[k];
+                    var gr = new DataGridViewRow();
+                    gr.CreateCells(grid, r.Ok && !r.Excluded, r.OldName, r.NewName, r.Status);
+                    gr.Height = grid.RowTemplate.Height;
+                    gr.Tag = r;
+                    list[k] = gr;
                 }
-                else if (r.Status == Core.StatusSame) { gr.DefaultCellStyle.ForeColor = Theme.TextDim; }
-                else { gr.DefaultCellStyle.BackColor = Theme.DangerSoft; st.ForeColor = Theme.Danger; }
-                st.SelectionForeColor = st.ForeColor.IsEmpty ? Theme.Text : st.ForeColor;
-                list[k] = gr;
+                if (list.Length > 0) grid.Rows.AddRange(list);   // 一次加入；顏色在畫的時候才決定（CellFormatting），換配色不用重建
+                try { if (first >= 0 && first < grid.Rows.Count) grid.FirstDisplayedScrollingRowIndex = first; } catch { }
+                grid.ClearSelection();
             }
-            if (list.Length > 0) grid.Rows.AddRange(list);   // 一次加入，比一列一列加快很多
-            try { if (first >= 0 && first < grid.Rows.Count) grid.FirstDisplayedScrollingRowIndex = first; } catch { }
-            grid.ClearSelection();
+            finally { Redraw(grid, true); grid.Invalidate(); }
+            lblEmpty.Visible = rows.Count == 0;
+            filling = false;
+            UpdateCount();
         }
-        finally { Redraw(grid, true); grid.Invalidate(); }
-        lblEmpty.Visible = rows.Count == 0;
-        filling = false;
-        UpdateCount();
+    }
+    // 檔案清單每一格的顏色：只算畫面上看得到的那幾列
+    void GridCellColors(object sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= grid.Rows.Count) return;
+        var r = grid.Rows[e.RowIndex].Tag as FileRow; if (r == null) return;
+        bool status = grid.Columns[e.ColumnIndex].Name == "Status";
+        var st = e.CellStyle;
+        if (r.Ok)
+        {
+            if (r.Manual) st.BackColor = Theme.InfoSoft;
+            if (status) st.ForeColor = r.Excluded ? Theme.TextDim : Theme.Success;
+        }
+        else if (r.Status == Core.StatusSame) st.ForeColor = Theme.TextDim;
+        else { st.BackColor = Theme.DangerSoft; if (status) st.ForeColor = Theme.Danger; }
+        st.SelectionForeColor = st.ForeColor;
     }
 
     void UpdateCount()
